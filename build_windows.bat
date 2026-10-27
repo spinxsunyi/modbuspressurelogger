@@ -5,6 +5,8 @@ py -3.12 -m venv .venv
 if errorlevel 1 goto fail
 .venv\Scripts\python -m pip install -r requirements.txt pyinstaller==6.19.0
 if errorlevel 1 goto fail
+.venv\Scripts\python seed_demo.py
+if errorlevel 1 goto fail
 .venv\Scripts\python -m PyInstaller --noconfirm --clean --windowed --onedir --name PMSLogger --collect-all matplotlib app.py
 if errorlevel 1 goto fail
 copy README.md dist\PMSLogger\README.md
