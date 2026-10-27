@@ -1,0 +1,19 @@
+name: Build Windows portable
+on: workflow_dispatch
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt pyinstaller==6.19.0 pytest
+      - run: python -m pytest -q
+      - run: pyinstaller --noconfirm --clean --windowed --onedir --name PMSLogger --collect-all matplotlib app.py
+      - run: Copy-Item README.md dist/PMSLogger/
+      - run: Copy-Item data dist/PMSLogger/data -Recurse
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PMSLogger-Windows-portable
+          path: dist/PMSLogger/
