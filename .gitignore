@@ -1,0 +1,14 @@
+__pycache__/
+.pytest_cache/
+.venv/
+venv/
+build/
+dist/
+*.spec
+*.py[cod]
+data/*.sqlite*
+data/*.db*
+data/app.lock
+screenshots/
+examples/
+*.partial
