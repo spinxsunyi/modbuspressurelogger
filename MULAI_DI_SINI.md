@@ -4,7 +4,7 @@ Program memakai tampilan desktop Python/Tkinter. Mode awal SIMULATION, sehingga 
 
 ## Isi repository
 - Source program (`app.py`, `core.py`, `exports.py`, `instance.py`).
-- Skrip `seed_demo.py untuk membuat database dan dua rekaman contoh DEMO / Simulation.
+- Skrip `seed_demo.py` untuk membuat database dan dua rekaman contoh DEMO / Simulation.
 - Tes otomatis dan skrip build Windows.
 - Workflow Windows melalui GitHub Actions.
 
