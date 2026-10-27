@@ -1,37 +1,39 @@
 # PMS Logger v0.1 — Prototype simulasi
 
-Program sudah memakai tampilan desktop Python/Tkinter. Mode awal SIMULATION, sehingga tidak memerlukan PMS-970 atau adapter USB untuk menguji alurnya.
+Program memakai tampilan desktop Python/Tkinter. Mode awal SIMULATION, sehingga tidak memerlukan PMS-970 atau adapter USB untuk menguji alurnya.
 
-## Isi paket
+## Isi repository
 - Source program (`app.py`, `core.py`, `exports.py`, `instance.py`).
-- Dua rekaman contoh berlabel DEMO / Simulation di folder data.
-- Contoh hasil Excel, CSV, PDF, PNG di folder examples.
-- Screenshot dari program yang benar-benar dijalankan di Linux, bukan gambar desain.
+- Skrip `seed_demo.py untuk membuat database dan dua rekaman contoh DEMO / Simulation.
 - Tes otomatis dan skrip build Windows.
+- Workflow Windows melalui GitHub Actions.
+
+Database demo dan hasil export tidak disimpan di repository. Jalankan `python seed_demo.py` untuk membuat database contoh.
 
 ## Status portable
-ZIP ini adalah paket SOURCE, belum berisi PMSLogger.exe.
+Repository ini berisi source, belum berisi PMSLogger.exe.
 Untuk menghasilkan aplikasi portable, build satu kali pada mesin Windows dengan Python 3.12 dan internet:
-1. Ekstrak ZIP ke folder yang dapat ditulis.
-2. Jalankan build_windows.bat.
-3. Hasilnya PMSLogger-Windows-portable.zip.
-4. Ekstrak paket hasil build di laptop pemakaian dan buka PMSLogger.exe.
+1. Clone atau unduh repository, lalu buka foldernya.
+2. Jalankan `build_windows.bat`. Skrip ini membuat database demo sebelum build.
+3. Hasilnya `dist/PMSLogger-Windows-portable.zip`.
+4. Ekstrak paket hasil build di laptop pemakaian dan buka `PMSLogger.exe`.
 
 Laptop pemakaian tidak perlu Python, Node, Excel, atau instalasi database. Seluruh folder hasil build harus ikut dipindahkan. Driver USB mungkin tetap dibutuhkan untuk adapter asli.
 
-Alternatif: gunakan workflow Windows yang disertakan melalui GitHub Actions (manual workflow_dispatch) jika tidak ingin memasang Python pada laptop sendiri. Source perlu ditempatkan di root repository. Workflow belum dijalankan pada pengiriman ini.
+Alternatif: gunakan workflow Windows yang disertakan melalui GitHub Actions (manual workflow_dispatch) jika tidak ingin memasang Python pada laptop sendiri. Workflow belum dijalankan.
 
 ## Cara mencoba
-1. Buka aplikasi. Grafik langsung bergerak dari sensor virtual dengan siklus naik, hold, turun.
-2. Tekan Record. Nama rekaman dibuat otomatis; waktu pada nama menggunakan UTC agar tidak ambigu.
-3. Isi well, job, engineer, job ID dan lainnya selama recording. Perubahan disimpan otomatis.
-4. Add Event menangkap waktu saat tombol ditekan, lalu kamu mengisi keterangan.
-5. Centang Simulate disconnect untuk mencoba data putus. Hilangkan centang untuk melanjutkan.
-6. Buka History saat masih recording: acquisition tetap berjalan.
-7. Stop, lalu buka rekaman dengan Open in Viewer atau klik dua kali.
-8. Atur skala atau zoom. Use current view menyalin zoom ke konfigurasi export.
-9. Klik grafik untuk memilih waktu annotation; Add review annotation memberi catatan setelah job.
-10. Export ke Excel, CSV, PDF atau PNG. Centang Export selected time range untuk membatasi rentang.
+1. Jalankan `python seed_demo.py` untuk membuat database berisi rekaman demo.
+2. Buka aplikasi. Grafik langsung bergerak dari sensor virtual dengan siklus naik, hold, turun.
+3. Tekan Record. Nama rekaman dibuat otomatis; waktu pada nama menggunakan UTC agar tidak ambigu.
+4. Isi well, job, engineer, job ID dan lainnya selama recording. Perubahan disimpan otomatis.
+5. Add Event menangkap waktu saat tombol ditekan, lalu kamu mengisi keterangan.
+6. Centang Simulate disconnect untuk mencoba data putus. Hilangkan centang untuk melanjutkan.
+7. Buka History saat masih recording: acquisition tetap berjalan.
+8. Stop, lalu buka rekaman dengan Open in Viewer atau klik dua kali.
+9. Atur skala atau zoom. Use current view menyalin zoom ke konfigurasi export.
+10. Klik grafik untuk memilih waktu annotation; Add review annotation memberi catatan setelah job.
+11. Export ke Excel, CSV, PDF atau PNG. Centang Export selected time range untuk membatasi rentang.
 
 ## Batas versi ini
 - Pembacaan Modbus sudah disiapkan dari manual, tetapi belum diuji dengan meter asli.
