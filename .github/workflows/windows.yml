@@ -11,10 +11,10 @@ jobs:
       - run: pip install -r requirements.txt pyinstaller==6.19.0 pytest
       - run: python -m pytest -q
       - run: python seed_demo.py
-      - run: pyinstaller --noconfirm --clean --windowed --onedir --name PMSLogger --collect-all matplotlib app.py
-      - run: Copy-Item README.md dist/PMSLogger/
-      - run: Copy-Item data dist/PMSLogger/data -Recurse
+      - run: pyinstaller --noconfirm --clean --windowed --onedir --name DigitalPressureRecorder --collect-all matplotlib app.py
+      - run: Copy-Item README.md dist/DigitalPressureRecorder/
+      - run: Copy-Item data dist/DigitalPressureRecorder/data -Recurse
       - uses: actions/upload-artifact@v4
         with:
-          name: PMSLogger-Windows-portable
-          path: dist/PMSLogger/
+          name: DigitalPressureRecorder-Windows-portable
+          path: dist/DigitalPressureRecorder/
