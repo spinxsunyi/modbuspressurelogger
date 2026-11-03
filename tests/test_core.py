@@ -22,7 +22,7 @@ def wait(engine,kind,timeout=3):
 def test_record_disconnect_recovery(tmp_path):
     store=Store(tmp_path/'db'); e=Engine(store);e.start()
     try:
-        e.send('connect',{**DEFAULTS,'interval':.1});wait(e,'sample');e.send('start');sid=wait(e,'started')['sid']
+        e.send('connect',{**DEFAULTS,'mode':'Simulation','interval':.1});wait(e,'sample');e.send('start');sid=wait(e,'started')['sid']
         wait(e,'sample');e.send('drop',True);time.sleep(.25);e.send('drop',False);time.sleep(.25)
         e.send('stop');wait(e,'stopped');rows=store.plot_rows(sid)
         assert any(r['quality']=='TIMEOUT' and r['value'] is None for r in rows)
@@ -57,7 +57,7 @@ def test_storage_failure_stops_recording(tmp_path):
     st=Store(tmp_path/'db');e=Engine(st);e.start()
     def fail(*a):raise OSError('disk full')
     try:
-        e.send('connect',{**DEFAULTS,'interval':.1});wait(e,'sample');e.send('start');sid=wait(e,'started')['sid'];st.add_sample=fail
+        e.send('connect',{**DEFAULTS,'mode':'Simulation','interval':.1});wait(e,'sample');e.send('start');sid=wait(e,'started')['sid'];st.add_sample=fail
         wait(e,'storage_error');assert e.sid is None;assert st.get(sid)['state']=='Storage error'
     finally:e.send('quit');e.join(3)
 
