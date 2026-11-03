@@ -16,7 +16,7 @@ DATA=Path(os.environ.get('PMS_LOGGER_DATA',str(BASE/'data')))
 
 class App(tk.Tk):
     def __init__(self):
-        super().__init__(); self.title('PMS Logger - Simulation Preview 0.1'); self.geometry('1280x820'); self.minsize(1000,680)
+        super().__init__(); self.title('Digital Pressure Recorder 0.2'); self.geometry('1440x960'); self.minsize(1100,800)
         DATA.mkdir(parents=True,exist_ok=True)
         self.instance_lock=InstanceLock(DATA/'app.lock')
         self.exporting=False
@@ -32,19 +32,24 @@ class App(tk.Tk):
         style.configure('TEntry',fieldbackground='white'); style.configure('Treeview',rowheight=30,fieldbackground='white')
         style.configure('Treeview.Heading',font=(UI_FONT,10,'bold')); style.configure('Title.TLabel',font=(UI_FONT,20,'bold'))
         nav=tk.Frame(self,bg='#17334c'); nav.pack(fill='x')
-        tk.Label(nav,text='PMS Logger',font=(UI_FONT,20,'bold'),bg='#17334c',fg='white',padx=20,pady=12).pack(side='left')
-        for page in ['Live Monitor','History','Settings']:
-            tk.Button(nav,text=page,command=lambda p=page:self.show(p),bg='#17334c',fg='white',bd=0,padx=18,pady=15).pack(side='left')
+        tk.Label(nav,text='Digital Pressure Recorder',font=(UI_FONT,20,'bold'),bg='#17334c',fg='white',padx=20,pady=12).pack(side='left')
+        self.nav_buttons={}
+        for page in ['Live Monitor','History','Settings','About']:
+            button=tk.Button(nav,text=page,command=lambda p=page:self.show(p),bg='#17334c',fg='white',bd=0,padx=18,pady=15)
+            button.pack(side='left'); self.nav_buttons[page]=button
         self.global_status=tk.Label(nav,text='SIMULATION',bg='#17334c',fg='#ffcb72',padx=15); self.global_status.pack(side='right')
         self.host=ttk.Frame(self,padding=14); self.host.pack(fill='both',expand=True)
         self.pages={name:ttk.Frame(self.host) for name in ['Live Monitor','History','Settings','Viewer']}
         self.footer=ttk.Label(self,text='Ready',padding=8); self.footer.pack(fill='x')
-        self.make_live(); self.make_history(); self.make_settings(); self.make_viewer(); self.show('Live Monitor')
+        self.make_live(); self.make_history(); self.make_settings(); self.make_viewer(); self.enhance(); self.show('Live Monitor')
         self.protocol('WM_DELETE_WINDOW',self.close); self.after(50,self.tick)
-        if self.settings.get('auto_connect'): self.after(200,self.connect)
+        if self.settings.get('auto_connect') and (self.settings['mode']=='Simulation' or self.settings['port']): self.after(200,self.connect)
     def show(self,name):
+        if name=='About':
+            messagebox.showinfo('About','Digital Pressure Recorder 0.2\nCreated by Eka Yudhi Pratama\nNovember 2026\n\nAplisens PMS-970 / Modbus RTU'); return
         for p in self.pages.values(): p.pack_forget()
         self.pages[name].pack(fill='both',expand=True); self.page=name
+        for key,button in self.nav_buttons.items(): button.config(bg='#008b92' if key==('History' if name=='Viewer' else name) else '#17334c')
         if name=='History': self.refresh_history()
     def plot(self,parent):
         fig=Figure(figsize=(8,4),dpi=100,facecolor='white'); ax=fig.add_subplot(111); fig.subplots_adjust(left=.09,right=.98,bottom=.15,top=.92)
@@ -57,11 +62,12 @@ class App(tk.Tk):
         self.drop=tk.BooleanVar(); ttk.Checkbutton(top,text='Simulate disconnect',variable=self.drop,command=lambda:self.engine.send('drop',self.drop.get())).pack(side='right')
         body=ttk.Panedwindow(p,orient='horizontal'); body.pack(fill='both',expand=True,pady=10)
         main=ttk.Frame(body); self.details_panel=ttk.LabelFrame(body,text='Recording details  |  autosaved',padding=12); body.add(main,weight=4); body.add(self.details_panel,weight=1); self.live_pane=body
-        self.value=ttk.Label(main,text='-',font=(UI_FONT,42,'bold'),foreground='#008b92'); self.value.pack(anchor='w')
+        readings=ttk.Frame(main);readings.pack(fill='x')
+        self.value=ttk.Label(readings,text='-',font=(UI_FONT,30,'bold'),foreground='#008b92'); self.value.pack(side='left')
         self.reading_status=ttk.Label(main,text='Waiting for first reading'); self.reading_status.pack(anchor='w')
         toolbar=ttk.Frame(main); toolbar.pack(fill='x',pady=6)
         self.follow=tk.BooleanVar(value=True); ttk.Checkbutton(toolbar,text='Auto-follow',variable=self.follow).pack(side='left')
-        self.window=tk.StringVar(value='5 min'); ttk.Combobox(toolbar,textvariable=self.window,values=['1 min','5 min','30 min','Buffer'],state='readonly',width=10).pack(side='left',padx=8)
+        self.window=tk.StringVar(value='5 min'); ttk.Combobox(toolbar,textvariable=self.window,values=['1 min','5 min','10 min','15 min','30 min','1 hour','All time'],state='readonly',width=10).pack(side='left',padx=8)
         ttk.Button(toolbar,text='Live',command=lambda:self.follow.set(True)).pack(side='left')
         ttk.Button(toolbar,text='Details +/-',command=self.toggle_details).pack(side='right')
         self.lfig,self.lax,self.lcanvas=self.plot(main); self.lax.set(xlabel='Time',ylabel='Pressure'); self.lax.grid(alpha=.2)
@@ -138,17 +144,21 @@ class App(tk.Tk):
         for n,k in enumerate(['mode','port','baud','parity','stopbits','address','interval','unit','utc_offset']):
             ttk.Label(grid,text=k.replace('_',' ').title()).grid(row=n,column=0,sticky='w',padx=8,pady=8)
             v=tk.StringVar(value=str(self.settings[k])); self.config_vars[k]=v
-            if k in choices:en=ttk.Combobox(grid,textvariable=v,values=choices[k],state='readonly',width=30)
+            if k=='port':
+                en=ttk.Combobox(grid,textvariable=v,state='readonly',width=30); self.port_combo=en
+            elif k in choices:en=ttk.Combobox(grid,textvariable=v,values=choices[k],state='readonly',width=30)
             else:en=ttk.Entry(grid,textvariable=v,width=32)
             en.grid(row=n,column=1,sticky='ew')
         ttk.Button(grid,text='Find COM ports',command=self.find_ports).grid(row=1,column=2,padx=10)
         self.auto=tk.BooleanVar(value=self.settings['auto_connect']); ttk.Checkbutton(p,text='Auto-connect last configuration at startup',variable=self.auto).pack(anchor='w',pady=8)
-        ttk.Label(p,text='Hardware profile: PMS-970  |  FC03  |  address 0x0001  |  readout + status\nUnit labels must match the meter; this version does not convert pressure units.\nHardware connection has not yet been validated.\n\nData: '+str(DATA),wraplength=900).pack(anchor='w',pady=12)
+        ttk.Label(p,text='Hardware profile: PMS-970  |  FC03  |  address 0x0001  |  readout + status\nUnit labels must match the meter; this version does not convert pressure units.\nDevice communication confirmed by user at 9600 baud, November 2026.\n\nData: '+str(DATA),wraplength=900).pack(anchor='w',pady=12)
         ttk.Button(p,text='Save and reconnect',command=self.apply_settings,style='Accent.TButton').pack(anchor='w')
     def find_ports(self):
         from serial.tools.list_ports import comports
-        ports=list(comports()); messagebox.showinfo('COM ports','\n'.join(f'{p.device}: {p.description}' for p in ports) or 'No serial devices found')
-        if len(ports)==1:self.config_vars['port'].set(ports[0].device)
+        ports=list(comports()); names=[p.device for p in ports]
+        self.port_combo.configure(values=names)
+        if self.config_vars['port'].get() not in names: self.config_vars['port'].set(names[0] if names else '')
+        self.footer.config(text=f'{len(names)} COM ports detected')
     def apply_settings(self):
         if self.sid or self.pending:messagebox.showinfo('Recording','Stop recording before changing settings.');return
         try:
@@ -205,11 +215,13 @@ class App(tk.Tk):
     def paint_viewer(self):
         v=self.view_values(); ax=self.vax; ax.clear(); start=self.vsession['started']
         ax.plot([(r['ts']-start)/60 for r in self.vrows],[r['value'] if r['quality']=='OK' and r['value'] is not None else math.nan for r in self.vrows],color='#008b92',lw=1.1)
-        ax.set(xlabel='Elapsed minutes',ylabel='Pressure ('+self.vsession['unit']+')',title=v['title'],xlim=(v['xmin'],v['xmax']),ylim=(v['ymin'],v['ymax'])); ax.grid(alpha=.2)
+        from matplotlib.ticker import FuncFormatter
+        ax.xaxis.set_major_formatter(FuncFormatter(lambda x,pos:stamp(start+x*60,self.settings['utc_offset'])[11:19]))
+        ax.set(xlabel='Time',ylabel='Pressure ('+self.vsession['unit']+')',title=v['title'],xlim=(v['xmin'],v['xmax']),ylim=(v['ymin'],v['ymax'])); ax.grid(alpha=.2)
         for i in self.events_tree.get_children():self.events_tree.delete(i)
         for e in self.vevents:
             x=(e['ts']-start)/60; ax.axvline(x,ls='--',lw=.7,color='#bd7b1c')
-            annotation=ax.annotate(e['label'],(x,.95),xycoords=('data','axes fraction'),rotation=90,va='top',fontsize=8); annotation.draggable()
+            annotation=ax.annotate(e['label'] if self.history_labels.get() else '',(x,.95),xycoords=('data','axes fraction'),rotation=90,va='top',fontsize=8); annotation.draggable()
             self.events_tree.insert('','end',iid=str(e['id']),values=(f'{x:.3f}',e['label'],e['kind']))
         self.vcanvas.draw_idle()
     def apply_view(self):
@@ -266,7 +278,7 @@ class App(tk.Tk):
                 elif kind=='connected':self.connected=True;self.connection.config(text=d['settings']['mode']+'  |  '+(d['settings']['port'] or 'virtual sensor'));self.connect_btn.config(text='Disconnect')
                 elif kind=='disconnected':self.connected=False;self.connection.config(text='Disconnected');self.connect_btn.config(text='Connect');self.reading_status.config(text='STALE  |  disconnected');self.latest=None
                 elif kind=='started':
-                    self.sid=d['sid'];self.pending=False;self.rec_started=time.monotonic();self.rec_count=0;self.rec_errors=0;self.record_btn.config(text='STOP Stop',state='normal');self.event_btn.config(state='normal');self.load_details(self.sid)
+                    self.last_recording=d['sid'];self.sid=d['sid'];self.pending=False;self.rec_started=time.monotonic();self.rec_count=0;self.rec_errors=0;self.record_btn.config(text='STOP Stop',state='normal');self.event_btn.config(state='normal');self.load_details(self.sid)
                 elif kind in ('stopped','storage_error'):
                     self.sid=None;self.pending=False;self.record_btn.config(text='REC Record',state='normal');self.event_btn.config(state='disabled');self.rec_label.config(text='Preview only  |  not saved')
                     if kind=='storage_error':messagebox.showerror('RECORDING STOPPED - storage failure',d['text'])
@@ -280,14 +292,15 @@ class App(tk.Tk):
         else:self.global_status.config(text=self.settings['mode'].upper()+'  |  PREVIEW')
         if self.latest and time.time()-self.latest['ts']>max(2,3*self.settings['interval']):self.reading_status.config(text='STALE  |  waiting for new reading',foreground='#b45309')
         if self.page=='Live Monitor' and self.buffer and time.monotonic()-self.last_plot>.5:
-            self.last_plot=time.monotonic(); rows=list(self.buffer); end=rows[-1]['ts']; seconds={'1 min':60,'5 min':300,'30 min':1800,'Buffer':1e20}[self.window.get()]
-            rows=[r for r in rows if r['ts']>=end-seconds]
+            self.last_plot=time.monotonic(); rows=list(self.buffer); end=rows[-1]['ts']; seconds={'1 min':60,'5 min':300,'10 min':600,'15 min':900,'30 min':1800,'1 hour':3600,'All time':1e20}[self.window.get()]
+            rows=[r for r in rows if r['ts']>=end-seconds] if self.follow.get() else rows
             from matplotlib.ticker import FuncFormatter
             self.line.set_data([r['ts'] for r in rows],[r['value'] if r['quality']=='OK' else math.nan for r in rows]);self.lax.set_ylabel('Pressure ('+self.settings['unit']+')')
             self.lax.xaxis.set_major_formatter(FuncFormatter(lambda x,pos:stamp(x,self.settings['utc_offset'])[11:19]))
             if self.follow.get():
-                self.lax.relim();self.lax.autoscale_view();self.lax.set_xlim(max(rows[0]['ts'],end-seconds),max(end,rows[0]['ts']+1))
+                self.lax.relim();self.lax.autoscale_view(scaley=self.live_auto.get());self.lax.set_xlim(max(rows[0]['ts'],end-seconds),max(end,rows[0]['ts']+1))
             self.lcanvas.draw_idle()
+        self.update_enhancements()
         if self.closing:
             if not self.engine.is_alive():self.instance_lock.close();self.destroy();return
         self.after(80,self.tick)
@@ -296,6 +309,154 @@ class App(tk.Tk):
         if self.sid and not messagebox.askyesno('Stop and exit?','Stop recording, save and exit?'):return
         if self.save_job:self.after_cancel(self.save_job);self.save_details()
         self.closing=True;self.engine.send('quit');self.footer.config(text='Saving and closing...')
+
+    def enhance(self):
+        self.last_recording=None; self.enhanced_last=0; self.live_artists=[]
+        self.global_status.pack_forget()
+        self.status_live=ttk.Label(self.global_status.master,text='DISCONNECTED',foreground='#b45309')
+        self.status_live.pack(side='right',padx=12)
+        self.status_rec=ttk.Label(self.global_status.master,text='REC OFF',foreground='#777777'); self.status_rec.pack(side='right',padx=12)
+        ttk.Label(self.footer.master,text='Created by Eka Yudhi Pratama • November 2026').pack(side='right')
+        self.live_stats=ttk.Label(self.value.master,text='Recording minimum: —   |   Recording maximum: —',font=(UI_FONT,13))
+        self.live_stats.pack(side='right',padx=12)
+        bar=ttk.Frame(self.lcanvas.get_tk_widget().master);bar.pack(before=self.lcanvas.get_tk_widget(),fill='x')
+        self.live_min=tk.StringVar(value='0');self.live_max=tk.StringVar(value='3000');self.live_auto=tk.BooleanVar(value=True)
+        for label,var in [('Pressure min',self.live_min),('Pressure max',self.live_max)]:
+            ttk.Label(bar,text=label).pack(side='left');ttk.Entry(bar,textvariable=var,width=9).pack(side='left',padx=5)
+        ttk.Button(bar,text='Apply',command=self.apply_live_scale).pack(side='left')
+        ttk.Checkbutton(bar,text='Auto scale',variable=self.live_auto).pack(side='left')
+        self.live_labels=tk.BooleanVar(value=True);ttk.Checkbutton(bar,text='Show event labels',variable=self.live_labels,command=self.paint_live_events).pack(side='left')
+        self.live_slider=ttk.Scale(self.lcanvas.get_tk_widget().master,from_=0,to=100,command=self.slide_live)
+        self.live_slider.pack(after=self.lcanvas.get_tk_widget(),fill='x')
+        self.live_events=ttk.Treeview(self.lcanvas.get_tk_widget().master,columns=('time','event'),show='headings',height=3)
+        self.live_events.heading('time',text='Time');self.live_events.heading('event',text='Event');self.live_events.pack(after=self.live_slider,fill='x')
+        self.live_events.bind('<<TreeviewSelect>>',self.select_live_event)
+        self.live_events.bind('<Double-1>',self.edit_live_event)
+        self.viewer_stats=ttk.Label(self.pages['Viewer'],text='');self.viewer_stats.pack(side='bottom')
+        bar=ttk.Frame(self.vcanvas.get_tk_widget().master);bar.pack(before=self.vcanvas.get_tk_widget(),fill='x')
+        self.history_window=tk.StringVar(value='All time')
+        ttk.Label(bar,text='Time window').pack(side='left')
+        box=ttk.Combobox(bar,textvariable=self.history_window,values=['1 min','5 min','10 min','15 min','30 min','1 hour','All time'],state='readonly',width=12)
+        box.pack(side='left');box.bind('<<ComboboxSelected>>',lambda e:self.slide_history(0))
+        self.history_labels=tk.BooleanVar(value=True)
+        ttk.Checkbutton(bar,text='Show event labels',variable=self.history_labels,command=self.paint_viewer).pack(side='left')
+        self.history_slider=ttk.Scale(self.vcanvas.get_tk_widget().master,from_=0,to=100,command=self.slide_history)
+        self.history_slider.pack(after=self.vcanvas.get_tk_widget(),fill='x')
+        self.events_tree.bind('<<TreeviewSelect>>',self.select_history_event)
+        self.lcanvas.mpl_connect('motion_notify_event',lambda e:self.hover(e,False))
+        self.vcanvas.mpl_connect('motion_notify_event',lambda e:self.hover(e,True))
+        self.ltip=None;self.vtip=None
+        self.find_ports()
+
+    def apply_live_scale(self):
+        try:
+            lo,hi=float(self.live_min.get()),float(self.live_max.get())
+            if not math.isfinite(lo) or not math.isfinite(hi) or lo>=hi:raise ValueError('Minimum must be less than maximum; use finite numbers.')
+            self.live_auto.set(False);self.lax.set_ylim(lo,hi);self.lcanvas.draw_idle()
+        except ValueError as exc:messagebox.showerror('Pressure scale',str(exc))
+
+    def window_seconds(self,name):
+        return {'1 min':60,'5 min':300,'10 min':600,'15 min':900,'30 min':1800,'1 hour':3600,'All time':float('inf')}[name]
+
+    def slide_live(self,value):
+        if not self.buffer:return
+        lo,hi=self.buffer[0]['ts'],self.buffer[-1]['ts']; width=min(self.window_seconds(self.window.get()),max(hi-lo,1))
+        start=lo+max(0,hi-lo-width)*float(value)/100
+        self.follow.set(False);self.lax.set_xlim(start,start+width)
+        rows=list(self.buffer);self.line.set_data([r['ts'] for r in rows],[r['value'] if r['quality']=='OK' else math.nan for r in rows])
+        self.lcanvas.draw_idle()
+
+    def slide_history(self,value):
+        if not self.viewer_sid or not self.vrows:return
+        duration=max((self.vrows[-1]['ts']-self.vsession['started'])/60,.01)
+        width=min(duration,self.window_seconds(self.history_window.get())/60)
+        start=max(0,duration-width)*float(value)/100
+        self.view_vars['xmin'].set(str(start));self.view_vars['xmax'].set(str(start+width));self.paint_viewer()
+
+    def hover(self,event,history):
+        ax=self.vax if history else self.lax;canvas=self.vcanvas if history else self.lcanvas
+        attr='vtip' if history else 'ltip';old=getattr(self,attr,None)
+        if old is not None:
+            try:old.remove()
+            except (ValueError,NotImplementedError):pass
+            setattr(self,attr,None)
+        if event.inaxes!=ax or event.xdata is None:canvas.draw_idle();return
+        events=self.vevents if history and self.viewer_sid else self.store.events(self.last_recording) if not history and self.last_recording else []
+        base=self.vsession['started'] if history and self.viewer_sid else 0
+        target=base+event.xdata*60 if history else event.xdata
+        def xpos(ts):return (ts-base)/60 if history else ts
+        near=next((e for e in events if abs(ax.transData.transform((xpos(e['ts']),0))[0]-event.x)<8),None)
+        if near:text=stamp(near['ts'],self.settings['utc_offset'])+'\n'+near['label'];x=event.xdata;y=event.ydata
+        else:
+            if history:
+                if not self.viewer_sid:return
+                with self.store.connect() as c:
+                    rows=[dict(r) for r in c.execute('SELECT * FROM samples WHERE session=? AND ts BETWEEN ? AND ? ORDER BY ts',(self.viewer_sid,target-5,target+5))]
+            else:rows=list(self.buffer)
+            if not rows:canvas.draw_idle();return
+            row=min(rows,key=lambda r:abs(r['ts']-target));x=xpos(row['ts']);y=row['value']
+            if row['quality']!='OK' or y is None:canvas.draw_idle();return
+            unit=self.vsession['unit'] if history else self.settings['unit']
+            text=f"Time: {stamp(row['ts'],self.settings['utc_offset'])[11:23]}\nPressure: {y:,.2f} {unit}"
+        tip=ax.annotate(text,(x,y),xytext=(12,16),textcoords='offset points',bbox=dict(boxstyle='round',fc='white',ec='#17334c'),fontsize=9)
+        setattr(self,attr,tip);canvas.draw_idle()
+
+    def recording_extrema(self,sid):
+        with self.store.connect() as c:
+            return c.execute("SELECT min(value),max(value) FROM samples WHERE session=? AND quality='OK'",(sid,)).fetchone()
+
+    def update_enhancements(self):
+        valid=self.connected and self.latest and self.latest['quality']=='OK' and time.time()-self.latest['ts']<=max(2,3*self.settings['interval'])
+        self.status_live.config(text='LIVE' if valid else 'DISCONNECTED / NO DATA',foreground='#16803c' if valid else '#c27500')
+        self.status_rec.config(text='● RECORDING' if self.sid else 'REC OFF',foreground='#d92828' if self.sid else '#777777')
+        if time.monotonic()-self.enhanced_last<1:return
+        self.enhanced_last=time.monotonic()
+        if self.last_recording:
+            lo,hi=self.recording_extrema(self.last_recording)
+            if lo is None:self.live_stats.config(text='Recording minimum: — | Recording maximum: —')
+            if lo is not None:self.live_stats.config(text=f'Recording minimum: {lo:,.2f}\nRecording maximum: {hi:,.2f} {self.settings["unit"]}')
+            self.paint_live_events()
+        if self.viewer_sid:
+            lo,hi=self.recording_extrema(self.viewer_sid)
+            self.viewer_stats.config(text=f'Recording minimum: {lo if lo is not None else "—"} | Recording maximum: {hi if hi is not None else "—"} {self.vsession["unit"]}')
+
+    def paint_live_events(self):
+        for artist in self.live_artists:
+            try:artist.remove()
+            except ValueError:pass
+        self.live_artists=[]
+        if not self.last_recording:return
+        events=self.store.events(self.last_recording)
+        for e in events:
+            self.live_artists.append(self.lax.axvline(e['ts'],color='#bd7b1c',ls='--',lw=.8))
+            if self.live_labels.get():self.live_artists.append(self.lax.annotate(e['label'],(e['ts'],.95),xycoords=('data','axes fraction'),rotation=90,va='top',fontsize=8))
+        existing=set(self.live_events.get_children());wanted={str(e['id']) for e in events}
+        for key in existing-wanted:self.live_events.delete(key)
+        for e in events:
+            key=str(e['id']);values=(stamp(e['ts'],self.settings['utc_offset'])[11:23],e['label'])
+            if key in existing:self.live_events.item(key,values=values)
+            else:self.live_events.insert('','end',iid=key,values=values)
+        self.lcanvas.draw_idle()
+
+    def select_live_event(self,event=None):
+        selected=self.live_events.selection()
+        if not selected:return
+        e=next(e for e in self.store.events(self.last_recording) if str(e['id'])==selected[0])
+        width=self.lax.get_xlim()[1]-self.lax.get_xlim()[0];self.follow.set(False)
+        self.slide_live(self.live_slider.get());self.lax.set_xlim(e['ts']-width/2,e['ts']+width/2);self.lcanvas.draw_idle()
+
+    def edit_live_event(self,event=None):
+        selected=self.live_events.selection()
+        if not selected:return
+        e=next(e for e in self.store.events(self.last_recording) if str(e['id'])==selected[0])
+        text=simpledialog.askstring('Edit event','Label:',initialvalue=e['label'],parent=self)
+        if text:self.store.edit_event(e['id'],e['ts'],text);self.paint_live_events()
+
+    def select_history_event(self,event=None):
+        selected=self.events_tree.selection()
+        if not selected:return
+        e=next(e for e in self.vevents if str(e['id'])==selected[0]);center=(e['ts']-self.vsession['started'])/60
+        lo,hi=self.vax.get_xlim();width=hi-lo;self.vax.set_xlim(center-width/2,center+width/2);self.vcanvas.draw_idle()
 
 if __name__=='__main__':
     try:
