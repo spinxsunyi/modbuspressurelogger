@@ -16,7 +16,7 @@ def figure(rows,events,session,view):
     ax.set(xlabel='Elapsed time (minutes)',ylabel=f"Pressure ({session['unit']})",title=view.get('title') or session['name'])
     if view.get('ymin') is not None and view.get('ymax') is not None: ax.set_ylim(view['ymin'],view['ymax'])
     if view.get('xmin') is not None and view.get('xmax') is not None: ax.set_xlim(view['xmin'],view['xmax'])
-    ax.grid(alpha=.2); fig.text(.01,.01,f"{session['mode'].upper()} | Start: {stamp(start,offset)}",fontsize=8); fig.tight_layout(rect=(0,.04,1,1)); return fig
+    ax.grid(alpha=.2); fig.text(.01,.01,f"{session['mode'].upper()} | Start: {stamp(start,offset)}",fontsize=8); fig.text(.5,.01,f"Recording min: {view.get('recording_min', '—')} | max: {view.get('recording_max', '—')} {session['unit']}",fontsize=8); fig.tight_layout(rect=(0,.04,1,1)); return fig
 
 def export(store,sid,path,view,selected=False):
     path=Path(path); tmp=path.with_name(path.stem+'.partial'+path.suffix)
@@ -33,6 +33,8 @@ def export(store,sid,path,view,selected=False):
     try:
         with store.connect() as c:
             c.execute('BEGIN')
+            extrema=c.execute("SELECT min(value),max(value) FROM samples WHERE session=? AND quality='OK'",(sid,)).fetchone()
+            view['recording_min']=extrema[0];view['recording_max']=extrema[1]
             cursor=c.execute('SELECT * FROM samples WHERE session=? AND ts>=? AND ts<=? ORDER BY ts,id',(sid,lo,hi))
             if path.suffix=='.csv':
                 with tmp.open('w',newline='',encoding='utf-8-sig') as f:
@@ -42,7 +44,7 @@ def export(store,sid,path,view,selected=False):
                 import xlsxwriter
                 with xlsxwriter.Workbook(tmp,{'constant_memory':True,'strings_to_formulas':False,'strings_to_urls':False}) as book:
                     sh=book.add_worksheet('Summary'); sh.set_column(0,0,24); sh.set_column(1,1,65)
-                    meta={**{k:session[k] for k in ['name','mode','state','unit']},**json.loads(session['details']), 'start':stamp(session['started'],offset),'exported_at':stamp(__import__('time').time(),offset)}
+                    meta={**{k:session[k] for k in ['name','mode','state','unit']},**json.loads(session['details']), 'start':stamp(session['started'],offset),'exported_at':stamp(__import__('time').time(),offset),'recording_minimum':extrema[0],'recording_maximum':extrema[1]}
                     for n,(k,v) in enumerate(meta.items()): sh.write_row(n,0,[k,str(v)])
                     sheet=None; row=0; part=0
                     for r in cursor:
@@ -63,7 +65,7 @@ def export(store,sid,path,view,selected=False):
                     from reportlab.lib.utils import ImageReader
                     from reportlab.lib.pagesizes import A4, landscape
                     pdf=canvas.Canvas(str(tmp),pagesize=landscape(A4)); w,h=landscape(A4)
-                    pdf.setFont('Helvetica-Bold',16); pdf.drawString(30,h-35,'PMS Logger | Pressure Report')
+                    pdf.setFont('Helvetica-Bold',16); pdf.drawString(30,h-35,'Digital Pressure Recorder | Pressure Report')
                     pdf.setFont('Helvetica',9); y=h-54
                     details=json.loads(session['details'])
                     for label in [f"{session['mode'].upper()} | {stamp(session['started'],offset)}",f"Well: {details.get('well','')} | Job: {details.get('job','')} | ID: {details.get('job_id','')}",f"Engineer: {details.get('engineer','')} | Client: {details.get('client','')}"]:
