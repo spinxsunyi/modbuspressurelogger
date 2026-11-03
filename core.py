@@ -6,7 +6,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 from dataclasses import dataclass
 
-DEFAULTS = dict(mode='Simulation', port='', baud=19200, parity='E', stopbits=1,
+DEFAULTS = dict(mode='Modbus RTU', port='', baud=9600, parity='E', stopbits=1,
                 address=1, interval=.5, unit='psi', utc_offset=8, auto_connect=True)
 FIELDS = ['well', 'job', 'job_id', 'engineer', 'client', 'location', 'job_date', 'notes']
 
