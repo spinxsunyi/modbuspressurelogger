@@ -14,7 +14,47 @@ jobs:
       - run: pyinstaller --noconfirm --clean --windowed --onedir --name DigitalPressureRecorder --collect-all matplotlib app.py
       - run: Copy-Item README.md dist/DigitalPressureRecorder/
       - run: Copy-Item data dist/DigitalPressureRecorder/data -Recurse
+      - name: Package and verify portable ZIP
+        shell: python
+        run: |
+          from hashlib import file_digest
+          from pathlib import Path
+          from zipfile import ZipFile, ZIP_DEFLATED
+          import os
+
+          root = Path("dist/DigitalPressureRecorder")
+          exe = root / "DigitalPressureRecorder.exe"
+          avif = root / "_internal/PIL/_avif.cp312-win_amd64.pyd"
+          for required in (exe, avif):
+              if not required.is_file() or required.stat().st_size == 0:
+                  raise RuntimeError(f"Missing or empty build output: {required}")
+
+          output = Path("portable")
+          output.mkdir(exist_ok=True)
+          archive = output / "DigitalPressureRecorder-Windows-portable.zip"
+          files = sorted(p for p in root.rglob("*") if p.is_file())
+          with ZipFile(archive, "w", ZIP_DEFLATED, compresslevel=6) as packed:
+              for path in files:
+                  packed.write(path, path.relative_to(root.parent).as_posix())
+
+          with ZipFile(archive) as packed:
+              for path in files:
+                  name = path.relative_to(root.parent).as_posix()
+                  with path.open("rb") as source, packed.open(name) as member:
+                      if file_digest(source, "sha256").digest() != file_digest(member, "sha256").digest():
+                          raise RuntimeError(f"ZIP verification failed: {name}")
+
+          with archive.open("rb") as source:
+              digest = file_digest(source, "sha256").hexdigest()
+          checksum = f"{digest}  {archive.name}"
+          (output / "SHA256.txt").write_text(checksum + "\n", encoding="ascii")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              print(f"Verified {len(files)} files, including `{avif.name}`.\n\n"
+                    f"Portable ZIP: {archive.stat().st_size:,} bytes\n\n`{checksum}`", file=summary)
+
       - uses: actions/upload-artifact@v4
         with:
           name: DigitalPressureRecorder-Windows-portable
-          path: dist/DigitalPressureRecorder/
+          path: portable/
+          compression-level: 0
+          if-no-files-found: error
