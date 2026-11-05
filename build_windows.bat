@@ -7,12 +7,12 @@ if errorlevel 1 goto fail
 if errorlevel 1 goto fail
 .venv\Scripts\python seed_demo.py
 if errorlevel 1 goto fail
-.venv\Scripts\python -m PyInstaller --noconfirm --clean --windowed --onedir --name PMSLogger --collect-all matplotlib app.py
+.venv\Scripts\python -m PyInstaller --noconfirm --clean --windowed --onedir --name DigitalPressureRecorder --collect-all matplotlib app.py
 if errorlevel 1 goto fail
-copy README.md dist\PMSLogger\README.md
-xcopy data dist\PMSLogger\data\ /E /I /Y
-powershell -NoProfile -Command "Compress-Archive -Path dist\PMSLogger -DestinationPath PMSLogger-Windows-portable.zip -Force"
-echo Done: PMSLogger-Windows-portable.zip
+copy README.md dist\DigitalPressureRecorder\README.md
+xcopy data dist\DigitalPressureRecorder\data\ /E /I /Y
+powershell -NoProfile -Command "Compress-Archive -Path dist\DigitalPressureRecorder -DestinationPath DigitalPressureRecorder-Windows-portable.zip -Force"
+echo Done: DigitalPressureRecorder-Windows-portable.zip
 pause
 exit /b 0
 :fail

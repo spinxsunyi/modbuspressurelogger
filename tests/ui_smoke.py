@@ -13,6 +13,8 @@ messagebox.showinfo=lambda *a,**k:None
 messagebox.askyesno=lambda *a,**k:True
 simpledialog.askstring=lambda *a,**k:'Smoke-test event'
 a=App()
+a.settings['mode']='Simulation'
+a.settings['interval']=.1
 a.report_callback_exception=lambda *exc:errors.append(''.join(traceback.format_exception(*exc)))
 def pump(seconds=.5):
     until=time.monotonic()+seconds
@@ -23,13 +25,16 @@ try:
     sid=a.sid;a.detail_vars['well'].set('UI TEST');pump(.8)
     assert json.loads(a.store.get(sid)['details'])['well']=='UI TEST'
     a.add_live_event();assert len(a.store.events(sid))==1
+    a.live_min.set('0');a.live_max.set('3000');a.apply_live_scale();assert a.lax.get_ylim()==(0,3000)
+    a.slide_live(0);assert not a.follow.get();a.follow.set(True)
+    a.paint_live_events();assert len(a.live_events.get_children())==1
     a.toggle_details();a.toggle_details();pump(.2)
     a.engine.send('drop',True);pump(.7);assert a.latest['quality']=='TIMEOUT'
     a.engine.send('drop',False);pump(.7);assert a.latest['quality']=='OK'
     a.show('History');pump(.3);assert a.sid==sid
     a.show('Settings');pump(.3);assert a.sid==sid
     a.show('Live Monitor');a.record();pump(.4);assert not a.sid
-    a.load_viewer(sid);pump(.4);a.view_vars['ymax'].set('3000');a.apply_view();a.capture_view();pump(.2)
+    a.load_viewer(sid);pump(.4);a.history_window.set('1 min');a.slide_history(0);a.history_labels.set(False);a.paint_viewer();a.history_labels.set(True);a.view_vars['ymax'].set('3000');a.apply_view();a.capture_view();pump(.2)
     assert a.store.get(sid)['state']=='Completed'
     # Produce actual UI screenshots, using seeded two-minute recording for viewer.
     out=Path(__file__).resolve().parents[1]/'screenshots';out.mkdir(exist_ok=True)

@@ -8,7 +8,7 @@ def seed(path):
     store=Store(path)
     for n in range(2):
         start=time.time()-(n+1)*3600
-        sid=store.start(DEFAULTS,start)
+        sid=store.start({**DEFAULTS,'mode':'Simulation'},start)
         store.update(sid,'details',dict(well='DEMO — Tambora-66',job='Simulated pressure test',job_id=f'DEMO-{n+1:03}',engineer='Eka Yudhi',client='Demo only',location='Virtual sensor',job_date='2026-10-27',notes='Synthetic data for interface testing. Not a real well measurement.'))
         for i in range(241):
             t=i*.5;v=2450*(t/25 if t<25 else 1 if t<85 else max(0,1-(t-85)/25));v=max(0,v+3*math.sin(t*3))
