@@ -3,3 +3,4 @@ pyserial==3.5
 matplotlib==3.10.8
 XlsxWriter==3.2.9
 reportlab==4.4.9
+Pillow>=10.0,<13
