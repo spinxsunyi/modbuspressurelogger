@@ -611,20 +611,17 @@ class App(tk.Tk):
         strip=ttk.Frame(p,padding=(10,7),relief='solid',borderwidth=1)
         strip.pack(fill='x',pady=(0,8))
         self.viewer_summary_vars={}
-        summary_rows=((('min','Min pressure'),('max','Max pressure'),
-                       ('first_pressure','Start pressure'),('last_pressure','Last pressure')),
-                      (('start','Start time'),('stop','Stop time'),('duration','Duration')))
-        for row_index,fields in enumerate(summary_rows):
-            summary_row=ttk.Frame(strip)
-            summary_row.pack(fill='x',pady=(0,3) if row_index==0 else (3,0))
-            for index,(key,label) in enumerate(fields):
-                summary_row.columnconfigure(index,weight=1,uniform='summary')
-                cell=ttk.Frame(summary_row)
-                cell.grid(row=0,column=index,sticky='ew',padx=(5,7))
-                ttk.Label(cell,text=label+':',font=(UI_FONT,9),foreground='#576677').pack(side='left')
-                var=tk.StringVar(value='—')
-                self.viewer_summary_vars[key]=var
-                ttk.Label(cell,textvariable=var,font=(UI_FONT,10,'bold')).pack(side='left',padx=(5,0))
+        summary_fields=(('min','Min pressure'),('max','Max pressure'),
+                        ('first_pressure','Start pressure'),('last_pressure','Last pressure'),
+                        ('start','Start time'),('stop','Stop time'),('duration','Duration'))
+        for index,(key,label) in enumerate(summary_fields):
+            strip.columnconfigure(index,weight=1,uniform='summary')
+            cell=ttk.Frame(strip)
+            cell.grid(row=0,column=index,sticky='ew',padx=3)
+            ttk.Label(cell,text=label,font=(UI_FONT,8),foreground='#576677').pack(anchor='w')
+            var=tk.StringVar(value='—')
+            self.viewer_summary_vars[key]=var
+            ttk.Label(cell,textvariable=var,font=(UI_FONT,10,'bold')).pack(anchor='w')
 
         self.viewer_toolbar=ttk.Frame(p);toolbar=self.viewer_toolbar
         toolbar.pack(fill='x',pady=(0,7))
