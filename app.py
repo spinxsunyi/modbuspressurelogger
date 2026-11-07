@@ -78,6 +78,8 @@ class App(tk.Tk):
         style.configure('TFrame',background=BG)
         style.configure('TLabel',background=BG,foreground=INK)
         style.configure('TButton',padding=(12,8),background='#edf2f6',foreground=INK,borderwidth=1)
+        style.configure('Compact.TButton',padding=(6,3),font=(UI_FONT,9),background='#edf2f6',foreground=INK,borderwidth=1)
+        style.map('Compact.TButton',background=[('pressed','#cddde7'),('active','#dce8ef')])
         style.map('TButton',background=[('pressed','#cddde7'),('active','#dce8ef')])
         style.configure('Accent.TButton',background=TEAL,foreground='white',padding=(14,9),font=(UI_FONT,10,'bold'))
         style.map('Accent.TButton',background=[('pressed',TEAL_DARK),('active',TEAL_DARK)],
@@ -145,12 +147,13 @@ class App(tk.Tk):
                 self.follow.set(True)
                 self.lax.set_autoscaley_on(True)
             else:
-                self.history_window.set('All time')
+                self.history_window.set('Buffer data')
                 self.auto_history_scale()
                 self.slide_history(0)
         labels=[('Reset',reset),('−',lambda:zoom(1.5)),('+',lambda:zoom(2/3)),('Pan',tools.pan)] if live else [('Reset view',reset),('Zoom −',lambda:zoom(1.5)),('Zoom +',lambda:zoom(2/3)),('Pan',tools.pan)]
         for label,cmd in labels:
-            ttk.Button(bar,text=label,command=cmd,width=6 if live else None).pack(side='right',padx=2)
+            options={'style':'Compact.TButton','width':6} if live else {}
+            ttk.Button(bar,text=label,command=cmd,**options).pack(side='right',padx=2)
 
     def auto_history_scale(self):
         valid=[r['value'] for r in self.vrows if r['quality']=='OK' and r['value'] is not None]
@@ -198,17 +201,17 @@ class App(tk.Tk):
         ttk.Checkbutton(toolbar,text='Follow',variable=self.follow).pack(side='left')
         ttk.Label(toolbar,text='Window').pack(side='left',padx=(9,3))
         self.window=tk.StringVar(value='5 min')
-        ttk.Combobox(toolbar,textvariable=self.window,values=['1 min','5 min','10 min','15 min','30 min','1 hour','All time'],state='readonly',width=9).pack(side='left',padx=(0,5))
-        ttk.Button(toolbar,text='Live',command=lambda:self.follow.set(True),width=6).pack(side='left')
-        ttk.Button(toolbar,text='Scale / labels',command=self.show_live_options).pack(side='left',padx=(6,0))
-        ttk.Button(top,text='Details +/−',command=self.toggle_details).pack(side='right',padx=10)
+        ttk.Combobox(toolbar,textvariable=self.window,values=['1 min','5 min','10 min','15 min','30 min','1 hour','Buffer data'],state='readonly',width=9).pack(side='left',padx=(0,5))
+        ttk.Button(toolbar,text='Go to Live',style='Compact.TButton',command=lambda:self.follow.set(True)).pack(side='left')
+        ttk.Button(toolbar,text='Chart options',style='Compact.TButton',command=self.show_live_options).pack(side='left',padx=(6,0))
+        ttk.Button(top,text='Details +/−',style='Compact.TButton',command=self.toggle_details).pack(side='right',padx=10)
         self.lfig,self.lax,self.lcanvas=self.plot(main); self.lax.set(xlabel='Time',ylabel='Pressure'); self.lax.grid(alpha=.2)
         self.line,=self.lax.plot([],[],color='#008b92',lw=1.2)
         self.lcanvas.mpl_connect('button_press_event',lambda e:self.follow.set(False) if e.inaxes else None)
         self.chart_tools(self.lcanvas,main,True)
         controls=ttk.Frame(main); controls.pack(side='bottom',before=readings,fill='x',pady=(3,2))
         self.record_btn=ttk.Button(controls,text='Start recording',style='Accent.TButton',command=self.record); self.record_btn.pack(side='left')
-        self.event_btn=ttk.Button(controls,text='+ Add Event',command=self.add_live_event,state='disabled'); self.event_btn.pack(side='left',padx=10)
+        self.event_btn=ttk.Button(controls,text='+ Add Event',style='Compact.TButton',command=self.add_live_event,state='disabled'); self.event_btn.pack(side='left',padx=10)
         self.rec_label=ttk.Label(controls,text='Preview only  |  not saved'); self.rec_label.pack(side='left')
         self.detail_vars={}; self.detail_entries=[]
         self.session_name=ttk.Label(self.details_panel,text='Press Record to create a session',wraplength=250); self.session_name.pack(anchor='w',pady=(0,8))
@@ -520,7 +523,7 @@ class App(tk.Tk):
         else:self.global_status.config(text=self.settings['mode'].upper()+'  |  PREVIEW')
         if self.latest and time.time()-self.latest['ts']>max(2,3*self.settings['interval']):self.reading_status.config(text='STALE  |  waiting for new reading',foreground='#b45309')
         if self.page=='Live Monitor' and self.buffer and time.monotonic()-self.last_plot>.5:
-            self.last_plot=time.monotonic(); rows=list(self.buffer); end=rows[-1]['ts']; seconds={'1 min':60,'5 min':300,'10 min':600,'15 min':900,'30 min':1800,'1 hour':3600,'All time':1e20}[self.window.get()]
+            self.last_plot=time.monotonic(); rows=list(self.buffer); end=rows[-1]['ts']; seconds={'1 min':60,'5 min':300,'10 min':600,'15 min':900,'30 min':1800,'1 hour':3600,'Buffer data':1e20}[self.window.get()]
             rows=[r for r in rows if r['ts']>=end-seconds] if self.follow.get() else rows
             from matplotlib.ticker import FuncFormatter
             self.line.set_data([r['ts'] for r in rows],[r['value'] if r['quality']=='OK' else math.nan for r in rows]);self.lax.set_ylabel('Pressure ('+self.settings['unit']+')')
@@ -574,9 +577,9 @@ class App(tk.Tk):
             label.pack(fill='x',padx=12,pady=(2,12))
             self.viewer_metrics.append(label)
         bar=ttk.Frame(self.vcanvas.get_tk_widget().master);bar.pack(before=self.vcanvas.get_tk_widget(),fill='x')
-        self.history_window=tk.StringVar(value='All time')
+        self.history_window=tk.StringVar(value='Buffer data')
         ttk.Label(bar,text='Time window').pack(side='left')
-        box=ttk.Combobox(bar,textvariable=self.history_window,values=['1 min','5 min','10 min','15 min','30 min','1 hour','All time'],state='readonly',width=12)
+        box=ttk.Combobox(bar,textvariable=self.history_window,values=['1 min','5 min','10 min','15 min','30 min','1 hour','Buffer data'],state='readonly',width=12)
         box.pack(side='left');box.bind('<<ComboboxSelected>>',lambda e:self.slide_history(0))
         ttk.Button(bar,text='Auto scale',command=self.auto_history_scale).pack(side='left',padx=4)
         for key,title in [('ymin','Min'),('ymax','Max')]:
@@ -676,7 +679,7 @@ class App(tk.Tk):
         except ValueError as exc:messagebox.showerror('Pressure scale',str(exc))
 
     def window_seconds(self,name):
-        return {'1 min':60,'5 min':300,'10 min':600,'15 min':900,'30 min':1800,'1 hour':3600,'All time':float('inf')}[name]
+        return {'1 min':60,'5 min':300,'10 min':600,'15 min':900,'30 min':1800,'1 hour':3600,'Buffer data':float('inf')}[name]
 
     def slide_live(self,value):
         if not self.buffer:return
