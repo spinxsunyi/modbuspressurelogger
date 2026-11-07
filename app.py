@@ -627,50 +627,72 @@ class App(tk.Tk):
         self.report_ymin=tk.StringVar(value='')
         self.report_ymax=tk.StringVar(value='')
 
-        controls=ttk.Frame(section);controls.pack(fill='x',pady=(0,8))
-        modes=ttk.Frame(controls);modes.pack(side='left',anchor='w')
+        # Two clearly separated control columns: horizontal timeline on the left,
+        # vertical pressure scale and appearance on the right.
+        controls=ttk.Frame(section)
+        controls.pack(fill='x',pady=(0,10))
+        controls.columnconfigure(0,weight=3,uniform='reportcols')
+        controls.columnconfigure(1,weight=2,uniform='reportcols')
+        left=ttk.LabelFrame(controls,text='Time Interval & Horizontal Axis',padding=(10,9))
+        right=ttk.LabelFrame(controls,text='Pressure & Graph Display',padding=(10,9))
+        left.grid(row=0,column=0,sticky='nsew',padx=(0,7))
+        right.grid(row=0,column=1,sticky='nsew',padx=(7,0))
+
+        modes=ttk.Frame(left);modes.pack(fill='x',pady=(0,11))
         ttk.Radiobutton(modes,text='Full Recording',value='full',variable=self.report_range_mode,
-                        command=self.change_report_range_mode).pack(side='left',padx=(0,22))
-        ttk.Radiobutton(modes,text='Select Time Range on Graph',value='custom',variable=self.report_range_mode,
+                        command=self.change_report_range_mode).pack(side='left',padx=(0,15))
+        ttk.Radiobutton(modes,text='Select Time Range on Graph',value='custom',
+                        variable=self.report_range_mode,
                         command=self.change_report_range_mode).pack(side='left')
-        axisbar=ttk.Frame(controls);axisbar.pack(side='right',anchor='e')
-        ttk.Label(axisbar,text='Time axis').pack(side='left',padx=(0,6))
-        axis=ttk.Combobox(axisbar,textvariable=self.report_axis,state='readonly',style='Report.TCombobox',width=15,
+
+        bounds=ttk.Frame(left);bounds.pack(fill='x',pady=(0,10))
+        ttk.Label(bounds,text='Interval from (min)').pack(side='left')
+        self.report_from_entry=ttk.Entry(bounds,textvariable=self.report_start,width=10)
+        self.report_from_entry.pack(side='left',padx=(6,13))
+        ttk.Label(bounds,text='To (min)').pack(side='left')
+        self.report_to_entry=ttk.Entry(bounds,textvariable=self.report_end,width=10)
+        self.report_to_entry.pack(side='left',padx=(6,0))
+
+        axisbar=ttk.Frame(left);axisbar.pack(fill='x',pady=(0,10))
+        ttk.Label(axisbar,text='Time axis').pack(side='left',padx=(0,8))
+        axis=ttk.Combobox(axisbar,textvariable=self.report_axis,state='readonly',
+                          style='Report.TCombobox',width=16,
                           values=('Elapsed Time','Date & Time'))
         axis.pack(side='left')
         axis.bind('<<ComboboxSelected>>',lambda event:self.update_report_graph_options())
 
-        bounds=ttk.Frame(section);bounds.pack(fill='x',pady=(0,8))
-        ttk.Label(bounds,text='Interval from (min)').pack(side='left')
-        self.report_from_entry=ttk.Entry(bounds,textvariable=self.report_start,width=11)
-        self.report_from_entry.pack(side='left',padx=(6,15))
-        ttk.Label(bounds,text='To (min)').pack(side='left')
-        self.report_to_entry=ttk.Entry(bounds,textvariable=self.report_end,width=11)
-        self.report_to_entry.pack(side='left',padx=(6,16))
-        ttk.Label(bounds,text='Pressure unit').pack(side='left',padx=(5,6))
-        unit=ttk.Combobox(bounds,textvariable=self.report_unit,state='readonly',style='Report.TCombobox',width=8,
+        scale=ttk.Frame(left);scale.pack(fill='x')
+        self.report_xfrom_label=ttk.Label(scale,text='View X from (min)')
+        self.report_xfrom_label.pack(side='left',padx=(0,6))
+        ttk.Entry(scale,textvariable=self.report_view_xmin,width=19).pack(side='left',padx=(0,7))
+        ttk.Label(scale,text='to').pack(side='left',padx=(0,7))
+        ttk.Entry(scale,textvariable=self.report_view_xmax,width=19).pack(side='left')
+
+        unitrow=ttk.Frame(right);unitrow.pack(fill='x',pady=(0,11))
+        ttk.Label(unitrow,text='Pressure unit').pack(side='left',padx=(0,9))
+        unit=ttk.Combobox(unitrow,textvariable=self.report_unit,state='readonly',
+                          style='Report.TCombobox',width=9,
                           values=('psi','bar','kPa','MPa'))
-        unit.pack(side='left',padx=(0,14))
+        unit.pack(side='left')
         unit.bind('<<ComboboxSelected>>',lambda event:self.update_report_graph_options())
-        ttk.Checkbutton(bounds,text='Events',variable=self.report_events,
-                        command=self.update_report_graph_options).pack(side='left',padx=(0,12))
-        ttk.Checkbutton(bounds,text='Grid',variable=self.report_grid,
+
+        display=ttk.Frame(right);display.pack(fill='x',pady=(0,12))
+        ttk.Checkbutton(display,text='Events',variable=self.report_events,
+                        command=self.update_report_graph_options).pack(side='left',padx=(0,18))
+        ttk.Checkbutton(display,text='Grid',variable=self.report_grid,
                         command=self.update_report_graph_options).pack(side='left')
 
-        scale=ttk.Frame(section);scale.pack(fill='x',pady=(0,7))
-        self.report_xfrom_label=ttk.Label(scale,text='View X from (min)')
-        self.report_xfrom_label.pack(side='left')
-        ttk.Entry(scale,textvariable=self.report_view_xmin,width=19).pack(side='left',padx=(5,8))
-        ttk.Label(scale,text='to').pack(side='left')
-        ttk.Entry(scale,textvariable=self.report_view_xmax,width=19).pack(side='left',padx=(5,15))
-        self.report_y_label=ttk.Label(scale,text='Y min / max')
-        self.report_y_label.pack(side='left')
-        ttk.Entry(scale,textvariable=self.report_ymin,width=9).pack(side='left',padx=(5,5))
-        ttk.Label(scale,text='to').pack(side='left')
-        ttk.Entry(scale,textvariable=self.report_ymax,width=9).pack(side='left',padx=(5,10))
-        ttk.Button(scale,text='Apply Scale',style='Compact.TButton',
-                   command=self.apply_report_scale).pack(side='left',padx=(0,7))
-        ttk.Button(scale,text='Reset Zoom',style='Compact.TButton',
+        yrange=ttk.Frame(right);yrange.pack(fill='x',pady=(0,11))
+        self.report_y_label=ttk.Label(yrange,text='Y min / max')
+        self.report_y_label.pack(side='left',padx=(0,7))
+        ttk.Entry(yrange,textvariable=self.report_ymin,width=10).pack(side='left',padx=(0,7))
+        ttk.Label(yrange,text='to').pack(side='left',padx=(0,7))
+        ttk.Entry(yrange,textvariable=self.report_ymax,width=10).pack(side='left')
+
+        actions=ttk.Frame(right);actions.pack(fill='x')
+        ttk.Button(actions,text='Apply Scale',style='Compact.TButton',
+                   command=self.apply_report_scale).pack(side='left',padx=(0,8))
+        ttk.Button(actions,text='Reset Zoom',style='Compact.TButton',
                    command=self.reset_report_zoom).pack(side='left')
         ttk.Label(section,text='Drag to select a reporting interval. Mouse wheel zooms the view without changing the selected interval.',
                   foreground='#576677').pack(anchor='w',pady=(0,6))
