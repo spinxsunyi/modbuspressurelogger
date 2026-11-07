@@ -3,11 +3,11 @@ import json
 import math
 from datetime import datetime
 from matplotlib.figure import Figure
-from matplotlib.ticker import MaxNLocator
+from matplotlib.ticker import MaxNLocator, FuncFormatter
 from exports import stamp
 from units import from_psi
 
-def report_figure(store, sid, unit='psi'):
+def report_figure(store, sid, unit='psi', time_range=None, time_axis='Elapsed Time'):
     session=store.get(sid)
     if not session: raise ValueError('Recording no longer exists')
     details=json.loads(session['details'])
@@ -15,11 +15,16 @@ def report_figure(store, sid, unit='psi'):
     offset=settings.get('utc_offset',8)
     rows=store.plot_rows(sid)
     events=store.events(sid)
-    stats=store.stats(sid)
+    if time_range is not None:
+        lo,hi=time_range
+        rows=[r for r in rows if lo<=r['ts']<=hi]
+        events=[e for e in events if lo<=e['ts']<=hi]
     with store.connect() as db:
-        ext=db.execute("SELECT MIN(value),MAX(value) FROM samples WHERE session=? AND quality='OK' AND value IS NOT NULL",(sid,)).fetchone()
-        first=db.execute("SELECT value FROM samples WHERE session=? AND quality='OK' AND value IS NOT NULL ORDER BY ts,id LIMIT 1",(sid,)).fetchone()
-        last=db.execute("SELECT value FROM samples WHERE session=? AND quality='OK' AND value IS NOT NULL ORDER BY ts DESC,id DESC LIMIT 1",(sid,)).fetchone()
+        clause=' AND ts>=? AND ts<=?' if time_range is not None else ''
+        args=(sid,*time_range) if time_range is not None else (sid,)
+        ext=db.execute("SELECT MIN(value),MAX(value) FROM samples WHERE session=? AND quality='OK' AND value IS NOT NULL"+clause,args).fetchone()
+        first=db.execute("SELECT value FROM samples WHERE session=? AND quality='OK' AND value IS NOT NULL"+clause+" ORDER BY ts,id LIMIT 1",args).fetchone()
+        last=db.execute("SELECT value FROM samples WHERE session=? AND quality='OK' AND value IS NOT NULL"+clause+" ORDER BY ts DESC,id DESC LIMIT 1",args).fetchone()
     def fmt(v):
         return '—' if v is None else f'{from_psi(v,unit):,.2f} {unit}'
     fig=Figure(figsize=(8.27,11.69),dpi=110,facecolor='white')
@@ -52,7 +57,9 @@ def report_figure(store, sid, unit='psi'):
         x=(e['ts']-start)/60
         ax.axvline(x,color='#bb852c',lw=.75,ls='--',alpha=.8)
         ax.annotate(str(i),(x,.96),xycoords=('data','axes fraction'),fontsize=7,color='#925b10',ha='center',va='top')
-    ax.set(xlabel='Elapsed time (minutes)',ylabel=f'Pressure ({unit})')
+    configure_time_axis(ax,start,offset,time_axis)
+    ax.set(ylabel=f'Pressure ({unit})')
+    if time_range is not None:ax.set_xlim((time_range[0]-start)/60,(time_range[1]-start)/60)
     ax.xaxis.set_major_locator(MaxNLocator(6))
     ax.grid(alpha=.22)
     ax.tick_params(labelsize=8)
@@ -82,10 +89,15 @@ def report_figure(store, sid, unit='psi'):
     txt(.94,.029,'Page 1 of 1',7,color=gray,ha='right')
     return fig
 
-def graph_figure(store,sid,unit='psi'):
+def graph_figure(store,sid,unit='psi',time_range=None,time_axis='Elapsed Time'):
     session=store.get(sid)
     if not session:raise ValueError('Recording no longer exists')
     rows=store.plot_rows(sid);events=store.events(sid)
+    offset=json.loads(session['settings']).get('utc_offset',8)
+    if time_range is not None:
+        lo,hi=time_range
+        rows=[r for r in rows if lo<=r['ts']<=hi]
+        events=[e for e in events if lo<=e['ts']<=hi]
     fig=Figure(figsize=(12,6),dpi=140,facecolor='white');ax=fig.add_subplot(111)
     start=session['started']
     ax.plot([(r['ts']-start)/60 for r in rows],
@@ -94,6 +106,16 @@ def graph_figure(store,sid,unit='psi'):
     for i,e in enumerate(events,1):
         x=(e['ts']-start)/60;ax.axvline(x,color='#bb852c',ls='--',lw=.8)
         if i<=30:ax.annotate(str(i),(x,.96),xycoords=('data','axes fraction'),ha='center',va='top',fontsize=8)
-    ax.set(title=session['name'],xlabel='Elapsed time (minutes)',ylabel=f'Pressure ({unit})')
+    configure_time_axis(ax,start,offset,time_axis)
+    ax.set(title=session['name'],ylabel=f'Pressure ({unit})')
+    if time_range is not None:ax.set_xlim((time_range[0]-start)/60,(time_range[1]-start)/60)
     ax.grid(alpha=.2);fig.tight_layout()
     return fig
+
+def configure_time_axis(ax,start,offset,mode):
+    if mode=='Date & Time':
+        ax.set_xlabel('Date & time (UTC%+g)' % float(offset))
+        ax.xaxis.set_major_formatter(FuncFormatter(
+            lambda x,pos:stamp(start+x*60,offset).replace('T',' ')[11:19]))
+    else:
+        ax.set_xlabel('Elapsed time (minutes)')
