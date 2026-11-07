@@ -136,6 +136,7 @@ class App(tk.Tk):
         tools=NavigationToolbar2Tk(canvas,parent,pack_toolbar=False)
         bar=ttk.Frame(parent)
         bar.pack(side='bottom',fill='x')
+        if live:self.live_chart_tools=bar
         def zoom(factor):
             ax=canvas.figure.axes[0]
             lo,hi=ax.get_xlim()
@@ -170,9 +171,9 @@ class App(tk.Tk):
         self.connection=ttk.Label(top,text='Waiting for device'); self.connection.pack(side='left')
         self.connect_btn=ttk.Button(top,text='Connect',command=self.toggle_connect); self.connect_btn.pack(side='left',padx=12)
         self.drop=tk.BooleanVar(); ttk.Checkbutton(top,text='Simulate disconnect',variable=self.drop,command=lambda:self.engine.send('drop',self.drop.get())).pack(side='right')
-        body=ttk.Panedwindow(p,orient='horizontal'); body.pack(fill='both',expand=True,pady=10)
-        main=ttk.Frame(body); self.details_panel=ttk.LabelFrame(body,text='Recording details  |  autosaved',padding=12); body.add(main,weight=4); body.add(self.details_panel,weight=1); self.live_pane=body
-        readings=ttk.Frame(main);readings.pack(fill='x',pady=(2,10))
+        body=ttk.Panedwindow(p,orient='horizontal'); body.pack(fill='both',expand=True,pady=(7,4))
+        main=ttk.Frame(body); self.details_panel=ttk.LabelFrame(body,text='Recording details  |  autosaved',padding=10); body.add(main,weight=5); body.add(self.details_panel,weight=1); self.live_pane=body
+        readings=ttk.Frame(main);readings.pack(fill='x',pady=(0,6))
         for col in range(3):readings.columnconfigure(col,weight=1,uniform='metric')
         def metric_card(column,title,highlight=False):
             bg=PALE_TEAL if highlight else SURFACE
@@ -180,23 +181,23 @@ class App(tk.Tk):
                            highlightbackground='#a9d6d4' if highlight else BORDER)
             panel.grid(row=0,column=column,sticky='nsew',padx=(0,8) if column<2 else (0,0))
             tk.Label(panel,text=title,bg=bg,fg=NAVY,font=(UI_FONT,11,'bold'),
-                     anchor='w').pack(fill='x',padx=12,pady=(9,2))
+                     anchor='w').pack(fill='x',padx=12,pady=(6,0))
             return panel,bg
         live_card,live_bg=metric_card(0,'Live pressure',True)
-        self.value=tk.Label(live_card,text='—',font=(UI_FONT,27,'bold'),bg=live_bg,
+        self.value=tk.Label(live_card,text='—',font=(UI_FONT,25,'bold'),bg=live_bg,
                             fg=TEAL_DARK,anchor='w')
         self.value.pack(fill='x',padx=12)
         self.reading_status=tk.Label(live_card,text='Waiting for first reading',
                                      bg=live_bg,fg=INK,font=(UI_FONT,9),anchor='w')
-        self.reading_status.pack(fill='x',padx=12,pady=(0,10))
+        self.reading_status.pack(fill='x',padx=12,pady=(0,6))
         self.metric=[]
         for col,title in [(1,'Recording minimum'),(2,'Recording maximum')]:
             panel,panel_bg=metric_card(col,title)
             label=tk.Label(panel,text='—',bg=panel_bg,fg=NAVY,
                            font=(UI_FONT,20,'bold'),anchor='w')
-            label.pack(fill='x',padx=12,pady=(4,20))
+            label.pack(fill='x',padx=12,pady=(3,10))
             self.metric.append(label)
-        toolbar=ttk.Frame(main); toolbar.pack(fill='x',pady=6)
+        toolbar=ttk.Frame(main); toolbar.pack(fill='x',pady=(2,3))
         self.follow=tk.BooleanVar(value=True); ttk.Checkbutton(toolbar,text='Auto-follow',variable=self.follow).pack(side='left')
         ttk.Label(toolbar,text='Time window').pack(side='left',padx=4)
         self.window=tk.StringVar(value='5 min'); ttk.Combobox(toolbar,textvariable=self.window,values=['1 min','5 min','10 min','15 min','30 min','1 hour','All time'],state='readonly',width=10).pack(side='left',padx=8)
@@ -206,7 +207,7 @@ class App(tk.Tk):
         self.line,=self.lax.plot([],[],color='#008b92',lw=1.2)
         self.lcanvas.mpl_connect('button_press_event',lambda e:self.follow.set(False) if e.inaxes else None)
         self.chart_tools(self.lcanvas,main,True)
-        controls=ttk.Frame(main); controls.pack(side='bottom',before=readings,fill='x',pady=4)
+        controls=ttk.Frame(main); controls.pack(side='bottom',before=readings,fill='x',pady=(3,2))
         self.record_btn=ttk.Button(controls,text='Start recording',style='Accent.TButton',command=self.record); self.record_btn.pack(side='left')
         self.event_btn=ttk.Button(controls,text='+ Add Event',command=self.add_live_event,state='disabled'); self.event_btn.pack(side='left',padx=10)
         self.rec_label=ttk.Label(controls,text='Preview only  |  not saved'); self.rec_label.pack(side='left')
@@ -545,7 +546,10 @@ class App(tk.Tk):
         self.status_live.pack(side='right',padx=12)
         self.status_rec=tk.Label(self.global_status.master,text='REC OFF',foreground='#777777'); self.status_rec.pack(side='right',padx=12)
         self.bind('<Configure>', self.adapt_width, add='+')
-        bar=ttk.Frame(self.lcanvas.get_tk_widget().master);bar.pack(before=self.lcanvas.get_tk_widget(),fill='x')
+        # Share one compact toolbar for scale controls and chart navigation.
+        bar=self.live_chart_tools
+        bar.pack_forget()
+        bar.pack(before=self.lcanvas.get_tk_widget(),fill='x',pady=(2,4))
         self.live_min=tk.StringVar(value='0');self.live_max=tk.StringVar(value='3000');self.live_auto=tk.BooleanVar(value=True)
         for label,var in [('Pressure min',self.live_min),('Pressure max',self.live_max)]:
             ttk.Label(bar,text=label).pack(side='left');ttk.Entry(bar,textvariable=var,width=9).pack(side='left',padx=5)
@@ -557,6 +561,11 @@ class App(tk.Tk):
         self.live_events=ttk.Treeview(self.lcanvas.get_tk_widget().master,columns=('time','event'),show='headings',height=2)
         self.live_events.heading('time',text='Time');self.live_events.heading('event',text='Event');self.live_events.pack(after=self.live_slider,fill='x')
         self.live_events.insert('','end',iid='empty',values=('','No events yet'))
+        self.events_expanded=False
+        self.live_event_toggle=ttk.Button(self.lcanvas.get_tk_widget().master,
+                                          text='Events (0)  ▸  Show event list',
+                                          command=self.toggle_live_events)
+        self.live_event_toggle.pack(after=self.live_events,fill='x')
         self.live_events.bind('<<TreeviewSelect>>',self.select_live_event)
         self.live_events.bind('<Double-1>',self.edit_live_event)
         viewer=self.pages['Viewer']
@@ -595,11 +604,13 @@ class App(tk.Tk):
             widget=canvas.get_tk_widget()
             widget.pack_forget()
             # Bottom controls and navigator claim their space before the flexible plot.
-            siblings = [self.live_events,self.live_slider] if canvas==self.lcanvas else [self.events_tree,self.history_slider]
+            siblings = [self.live_events,self.live_event_toggle,self.live_slider] if canvas==self.lcanvas else [self.events_tree,self.history_slider]
             for item in siblings:
                 item.pack_forget()
                 item.pack(side='bottom',fill='x')
             widget.pack(fill='both',expand=True)
+        # Event list is opt-in; the graph receives the reclaimed vertical space.
+        self.live_events.pack_forget()
         self.find_ports()
 
     def scroll_page(self,event):
@@ -752,7 +763,21 @@ class App(tk.Tk):
             key=str(e['id']);values=(stamp(e['ts'],self.settings['utc_offset'])[11:23],e['label'])
             if key in existing:self.live_events.item(key,values=values)
             else:self.live_events.insert('','end',iid=key,values=values)
+        self.update_live_event_toggle()
         self.lcanvas.draw_idle()
+
+    def toggle_live_events(self):
+        self.events_expanded=not self.events_expanded
+        if self.events_expanded:
+            self.live_events.pack(side='bottom',fill='x',before=self.live_event_toggle)
+        else:
+            self.live_events.pack_forget()
+        self.update_live_event_toggle()
+
+    def update_live_event_toggle(self):
+        count=0 if not self.last_recording else len(self.store.events(self.last_recording))
+        arrow='▾  Hide event list' if self.events_expanded else '▸  Show event list'
+        self.live_event_toggle.config(text=f'Events ({count})  {arrow}')
 
     def select_live_event(self,event=None):
         selected=self.live_events.selection()
