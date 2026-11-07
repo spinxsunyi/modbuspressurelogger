@@ -128,6 +128,8 @@ class App(tk.Tk):
                   background=[('disabled','#d9e0e5'),('pressed',TEAL_DARK),
                               ('active',TEAL_DARK),('!disabled',TEAL)],
                   foreground=[('disabled','#52616c'),('!disabled','white')])
+        style.configure('CompactAction.TButton',background='#21834b',foreground='white',padding=(8,4),font=(UI_FONT,9,'bold'))
+        style.map('CompactAction.TButton',background=[('disabled','#d9e0e5'),('pressed','#176538'),('active','#176538'),('!disabled','#21834b')],foreground=[('disabled','#52616c'),('!disabled','white')])
         style.configure('Report.TButton',background='#21834b',foreground='white',padding=(15,9),font=(UI_FONT,11,'bold'))
         style.map('Report.TButton',background=[('pressed','#176538'),('active','#176538')],foreground=[('!disabled','white')])
         style.configure('Record.TButton',background='#d52e36',foreground='white',padding=(14,9),font=(UI_FONT,10,'bold'))
@@ -561,7 +563,7 @@ class App(tk.Tk):
             button.pack(side='left',padx=(0,10))
             self.report_step_buttons.append(button)
         self.report_continue_interval=ttk.Button(navigation,text='Continue to Preview & Export  >',
-                    style='Compact.TButton',command=lambda:self.show_report_step(3))
+                    style='CompactAction.TButton',command=lambda:self.show_report_step(3))
         self.report_continue_interval.pack(side='right',padx=(4,0))
         self.report_continue_interval.pack_forget()
         self.report_steps=[ttk.Frame(p) for _ in range(3)]
@@ -580,7 +582,7 @@ class App(tk.Tk):
         selection=ttk.Frame(choose);selection.pack(fill='x')
         ttk.Label(selection,textvariable=self.reporting_record,font=(UI_FONT,12,'bold')).pack(side='left',padx=(0,18))
         self.report_history_button=ttk.Button(selection,text='Select from History  ▾',
-                   style='Compact.TButton',command=self.toggle_report_history)
+                   style='CompactAction.TButton',command=self.toggle_report_history)
         self.report_history_button.pack(side='left')
         self.report_history_panel=ttk.Frame(choose)
         searchbar=ttk.Frame(self.report_history_panel);searchbar.pack(fill='x',pady=(10,7))
@@ -860,11 +862,11 @@ class App(tk.Tk):
     def toggle_report_history(self):
         if self.report_history_panel.winfo_manager():
             self.report_history_panel.pack_forget()
-            self.report_history_button.configure(text='Select from History  ▾')
+            self.report_history_button.configure(text='Select from History  ▾',style='CompactAction.TButton')
         else:
             self.refresh_report_history()
             self.report_history_panel.pack(fill='both',expand=True,pady=(6,0))
-            self.report_history_button.configure(text='Hide Recordings  ▴')
+            self.report_history_button.configure(text='Hide Recordings  ▴',style='Compact.TButton')
 
     def refresh_report_history(self):
         tree=self.report_history_tree
