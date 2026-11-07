@@ -267,8 +267,8 @@ class App(tk.Tk):
                                  activeforeground='white' if active else INK,
                                  relief='sunken' if active else 'raised')
         labels=[('Reset',reset),('−',lambda:zoom(1.5)),('+',lambda:zoom(2/3))]
-        pan_button=tk.Button(bar,text='✥ Pan' if live else '✥',command=toggle_pan,
-                             width=6 if live else 4,font=(UI_FONT,9),bd=1,padx=3,pady=3)
+        pan_button=tk.Button(bar,text='✥ Pan',command=toggle_pan,
+                             width=8,font=(UI_FONT,11,'bold'),bd=1,padx=6,pady=3)
         pan_button.pack(side='right',padx=2)
         refresh_pan_button()
         for label,cmd in labels:
