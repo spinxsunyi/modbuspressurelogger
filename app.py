@@ -375,6 +375,9 @@ class App(tk.Tk):
         self.history_open=ttk.Button(footer,text='Open in Viewer',style='Accent.TButton',
                                      command=self.open_selected,state='disabled')
         self.history_open.pack(side='right')
+        self.history_delete=ttk.Button(footer,text='Delete recording',style='Compact.TButton',
+                                       command=self.delete_selected_recording,state='disabled')
+        self.history_delete.pack(side='right',padx=(0,10))
 
     def clear_history_search(self):
         self.search.set('')
@@ -384,6 +387,7 @@ class App(tk.Tk):
         chosen=self.history.selection()
         valid=bool(chosen and self.history.exists(chosen[0]))
         self.history_open.configure(state='normal' if valid else 'disabled')
+        self.history_delete.configure(state='normal' if valid else 'disabled')
         self.history_selection.configure(text='1 recording selected' if valid else 'Select a recording to review')
 
     def refresh_history(self):
@@ -416,6 +420,35 @@ class App(tk.Tk):
         chosen=self.history.selection()
         if chosen and self.history.exists(chosen[0]):
             self.load_viewer(chosen[0])
+
+    def delete_selected_recording(self):
+        chosen=self.history.selection()
+        if not chosen or not self.history.exists(chosen[0]):return
+        sid=chosen[0]
+        session=self.store.get(sid)
+        if not session:return
+        if session['state']=='Recording' or sid==getattr(self,'record_sid',None):
+            messagebox.showwarning('Delete recording','Stop recording before deleting this session.',parent=self)
+            return
+        details=json.loads(session['details'])
+        name=(details.get('well') or session['name'])
+        if not messagebox.askyesno('Delete recording',
+                f'Permanently delete recording "{name}"?\\n\\n'
+                'All pressure samples and annotations in this recording will be deleted. '
+                'This cannot be undone.',icon='warning',parent=self):
+            return
+        try:
+            if self.store.delete_session(sid):
+                if sid==self.viewer_sid:
+                    self.viewer_sid=None
+                    self.vsession=None
+                    self.vrows=[]
+                    self.vevents=[]
+                self.refresh_history()
+                self.footer.configure(text='Recording deleted')
+        except Exception as exc:
+            messagebox.showerror('Delete recording',str(exc),parent=self)
+
     def make_settings(self):
         # Keep every setting reachable when the window is narrow or display scaling is high.
         host=self.pages['Settings']
@@ -554,6 +587,8 @@ class App(tk.Tk):
         actions=ttk.Frame(annotations);actions.pack(fill='x',pady=(0,5))
         ttk.Label(actions,text='Right-click chart to annotate; left-click to select time',
                   foreground='#576677').pack(side='left')
+        ttk.Button(actions,text='Delete selected',style='Compact.TButton',
+                   command=self.delete_annotation).pack(side='right',padx=(5,0))
         ttk.Button(actions,text='Edit selected',style='Compact.TButton',
                    command=self.edit_annotation).pack(side='right',padx=(5,0))
         ttk.Button(actions,text='+ Add annotation',style='Compact.TButton',
@@ -713,6 +748,24 @@ class App(tk.Tk):
                 self.vevents=self.store.events(self.viewer_sid)
                 self.paint_viewer()
         except ValueError as e:messagebox.showerror('Annotation',str(e))
+    def delete_annotation(self):
+        selected=self.events_tree.selection()
+        if not selected or not self.viewer_sid:return
+        event=next((e for e in self.vevents if str(e['id'])==selected[0]),None)
+        if event is None:return
+        when=stamp(event['ts'],self.settings['utc_offset'])[11:19]
+        if not messagebox.askyesno('Delete annotation',
+                f'Delete annotation "{event["label"]}" at {when}?\\n\\n'
+                'This cannot be undone.',icon='warning',parent=self):
+            return
+        try:
+            if self.store.delete_event(event['id'],self.viewer_sid):
+                self.vevents=self.store.events(self.viewer_sid)
+                self.paint_viewer()
+                self.footer.configure(text='Annotation deleted')
+        except Exception as exc:
+            messagebox.showerror('Delete annotation',str(exc),parent=self)
+
     def edit_annotation(self):
         selected=self.events_tree.selection()
         if not selected:return
