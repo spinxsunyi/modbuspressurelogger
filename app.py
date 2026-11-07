@@ -757,7 +757,7 @@ class App(tk.Tk):
         resolution_row=ttk.Frame(three)
         resolution_row.pack(fill='x',pady=(0,8))
         self.report_resolution=tk.StringVar(value='all')
-        ttk.Label(resolution_row,text='Data resolution (Excel / CSV):').pack(side='left',padx=(0,9))
+        ttk.Label(resolution_row,text='CSV resolution:').pack(side='left',padx=(0,9))
         self.report_resolution_picker=ttk.Combobox(resolution_row,textvariable=self.report_resolution,
             values=['all','0.5 s','1 s','1 min'],state='readonly',width=12)
         self.report_resolution_picker.pack(side='left')
@@ -947,7 +947,7 @@ class App(tk.Tk):
 
     def refresh_reporting(self):
         if hasattr(self,'report_resolution_row'):
-            if self.report_format.get() in ('xlsx','csv'):
+            if self.report_format.get() == 'csv':
                 self.report_resolution_row.pack(fill='x',pady=(0,8),before=self.report_preview_info_label)
             else:
                 self.report_resolution_row.pack_forget()
@@ -1373,7 +1373,7 @@ class App(tk.Tk):
                         temp.replace(target)
                     finally:temp.unlink(missing_ok=True)
                 else:
-                    export(self.store,sid,path,{'xmin':(time_range[0]-session['started'])/60,'xmax':(time_range[1]-session['started'])/60},True,resolution=resolution)
+                    export(self.store,sid,path,{'xmin':(time_range[0]-session['started'])/60,'xmax':(time_range[1]-session['started'])/60},True,resolution=resolution if fmt=='csv' else None)
                 self.engine.emit('exported',path=path)
             except Exception as exc:
                 self.engine.emit('export_error',text='Export failed: '+str(exc))
