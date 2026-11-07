@@ -151,7 +151,7 @@ class App(tk.Tk):
         tk.Label(nav,image=self.header_logo,bg=NAVY,padx=0,pady=0).pack(side='left',padx=(12,4))
         self.brand=tk.Label(nav,text='Digital Pressure Recorder',font=(UI_FONT,15,'bold'),bg=NAVY,fg='white',padx=4,pady=2); self.brand.pack(side='left')
         self.nav_buttons={}
-        for page in ['Live Monitor','History','Reporting','Settings','About']:
+        for page in ['Live Monitor','History','Reporting','Settings','Help','About']:
             button=tk.Button(nav,text=page,command=lambda p=page:self.show(p),bg=NAVY,fg='white',activebackground=TEAL_DARK,activeforeground='white',relief='flat',bd=0,padx=10,pady=2,font=(UI_FONT,9))
             button.pack(side='left'); self.nav_buttons[page]=button
         # Independent indicators: acquisition mode/health and recording state.
@@ -167,8 +167,8 @@ class App(tk.Tk):
         self.credit=tk.Label(self.status_bar,text='A software by Eka Yudhi Pratama  •  November 2026',bg=NAVY,fg='white',anchor='e',padx=10,pady=4)
         self.credit.pack(side='right')
         self.host=ttk.Frame(self,padding=14); self.host.pack(fill='both',expand=True)
-        self.pages={name:ttk.Frame(self.host) for name in ['Live Monitor','History','Reporting','Settings','About','Viewer']}
-        self.make_live(); self.make_history(); self.make_reporting(); self.make_settings(); self.make_about(); self.make_viewer(); self.enhance(); self.show('Live Monitor')
+        self.pages={name:ttk.Frame(self.host) for name in ['Live Monitor','History','Reporting','Settings','Help','About','Viewer']}
+        self.make_live(); self.make_history(); self.make_reporting(); self.make_settings(); self.make_help(); self.make_about(); self.make_viewer(); self.enhance(); self.show('Live Monitor')
         # Route mouse-wheel scrolling to the active scrollable page.
         self.bind_all('<MouseWheel>',self.scroll_page,add='+')
         self.bind_all('<Button-4>',self.scroll_page,add='+')
@@ -176,9 +176,7 @@ class App(tk.Tk):
         self.protocol('WM_DELETE_WINDOW',self.close)
         self.bind_all('<Control-q>',lambda event:self.close(),add='+')
         self._tick_after_id=self.after(50,self.tick)
-        guide_needed=self.settings.get('mode')=='Modbus RTU' and not self.settings.get('hide_connection_guide',False)
-        if guide_needed:self.after(250,self.show_connection_guide)
-        elif self.settings.get('auto_connect') and (self.settings['mode']=='Simulation' or self.settings['port']):self.after(200,self.connect)
+        if self.settings.get('auto_connect') and (self.settings['mode']=='Simulation' or self.settings['port']):self.after(200,self.connect)
     def show(self,name):
         for p in self.pages.values(): p.pack_forget()
         self.pages[name].pack(fill='both',expand=True); self.page=name
@@ -1580,19 +1578,12 @@ class App(tk.Tk):
         previous=self.config_vars['port'].get().split(' — ',1)[0]
         self.config_vars['port'].set(next((n for n in names if n.split(' — ',1)[0]==previous),names[0] if names else ''))
         self.port_count.config(text=f'{len(names)} ports detected')
-    def show_connection_guide(self):
-        """Optional Modbus checklist, displayed before first connection attempt."""
-        if self.closing or self.settings.get('mode')!='Modbus RTU':return
-        dialog=tk.Toplevel(self)
-        dialog.title('Modbus RTU — Before Connecting')
-        dialog.transient(self)
-        dialog.resizable(False,False)
-        set_window_icon(dialog)
-        body=ttk.Frame(dialog,padding=20)
-        body.pack(fill='both',expand=True)
-        ttk.Label(body,text='Before Connecting',font=(UI_FONT,15,'bold')).pack(anchor='w',pady=(0,5))
-        ttk.Label(body,text='Verify your pressure transmitter and USB-RS485 connection.',
-                  foreground='#576677').pack(anchor='w',pady=(0,14))
+    def make_help(self):
+        """Always-accessible Modbus RTU connection checklist; no startup popup."""
+        page=self.pages['Help']
+        ttk.Label(page,text='Help — Modbus RTU Connection Guide',style='Title.TLabel').pack(anchor='w',pady=(0,10))
+        ttk.Label(page,text='Verify your pressure transmitter and USB-RS485 connection before recording.',
+                  foreground='#576677').pack(anchor='w',pady=(0,16))
         checklist=(
             ('1. Check hardware','Connect the USB-RS485 adapter, confirm transmitter power, and verify RS485 A/B wiring against the device documentation.'),
             ('2. Select COM port','In Settings, select the COM port assigned to your USB-RS485 adapter.'),
@@ -1600,33 +1591,10 @@ class App(tk.Tk):
             ('4. Connect and verify','Apply Settings to reconnect. Confirm valid live pressure readings before recording.'),
         )
         for heading,description in checklist:
-            ttk.Label(body,text=heading,font=(UI_FONT,10,'bold')).pack(anchor='w',pady=(5,1))
-            ttk.Label(body,text=description,wraplength=480,justify='left').pack(anchor='w',pady=(0,6))
-        dont_show=tk.BooleanVar(value=False)
-        ttk.Checkbutton(body,text="Don't show this again",variable=dont_show).pack(anchor='w',pady=(10,14))
-        buttons=ttk.Frame(body)
-        buttons.pack(fill='x')
-        def dismiss(open_settings=False):
-            if dont_show.get():
-                self.settings['hide_connection_guide']=True
-                try:
-                    path=DATA/'settings.json'
-                    temp=DATA/'settings.tmp'
-                    temp.write_text(json.dumps(self.settings,indent=2),encoding='utf-8')
-                    temp.replace(path)
-                except OSError as exc:
-                    messagebox.showwarning('Guide preference',f'Could not save preference: {exc}',parent=dialog)
-            dialog.grab_release()
-            dialog.destroy()
-            if open_settings:self.show('Settings')
-        dialog.protocol('WM_DELETE_WINDOW',dismiss)
-        ttk.Button(buttons,text='Close',style='Compact.TButton',command=dismiss).pack(side='right')
-        ttk.Button(buttons,text='Open Settings',style='Accent.TButton',
-                   command=lambda:dismiss(True)).pack(side='right',padx=(0,10))
-        dialog.update_idletasks()
-        dialog.geometry(f'+{self.winfo_rootx()+max(0,(self.winfo_width()-dialog.winfo_reqwidth())//2)}+{self.winfo_rooty()+max(0,(self.winfo_height()-dialog.winfo_reqheight())//2)}')
-        dialog.grab_set()
-        dialog.focus_set()
+            ttk.Label(page,text=heading,font=(UI_FONT,11,'bold')).pack(anchor='w',pady=(8,3))
+            ttk.Label(page,text=description,wraplength=700,justify='left').pack(anchor='w',pady=(0,8))
+        ttk.Button(page,text='Open Settings',style='Accent.TButton',
+                   command=lambda:self.show('Settings')).pack(anchor='w',pady=(16,0))
 
     def update_simulate_disconnect_visibility(self):
         if self.settings.get('mode')=='Simulation':
@@ -1646,7 +1614,6 @@ class App(tk.Tk):
             if not 1<=s['address']<=247:raise ValueError('Slave address must be 1-247')
             if s['mode']=='Modbus RTU' and not s['port']:raise ValueError('Specify a COM port')
             s['auto_connect']=self.auto.get()
-            s['hide_connection_guide']=self.settings.get('hide_connection_guide',False)
             tmp=DATA/'settings.tmp'; tmp.write_text(json.dumps(s,indent=2)); tmp.replace(DATA/'settings.json')
             old_unit=self.settings['unit']
             self.settings=s
