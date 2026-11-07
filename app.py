@@ -557,8 +557,42 @@ class App(tk.Tk):
                   foreground='#576677').pack(anchor='w',pady=(0,12))
         selection=ttk.Frame(choose);selection.pack(fill='x')
         ttk.Label(selection,textvariable=self.reporting_record,font=(UI_FONT,12,'bold')).pack(side='left',padx=(0,18))
-        ttk.Button(selection,text='Select from History',style='Compact.TButton',
-                   command=lambda:self.show('History')).pack(side='left')
+        self.report_history_button=ttk.Button(selection,text='Select from History  ▾',
+                   style='Compact.TButton',command=self.toggle_report_history)
+        self.report_history_button.pack(side='left')
+        self.report_history_panel=ttk.Frame(choose)
+        searchbar=ttk.Frame(self.report_history_panel);searchbar.pack(fill='x',pady=(10,7))
+        ttk.Label(searchbar,text='Find recording').pack(side='left',padx=(0,8))
+        self.report_history_search=tk.StringVar(value='')
+        search_entry=ttk.Entry(searchbar,textvariable=self.report_history_search,width=38)
+        search_entry.pack(side='left',fill='x',expand=True,padx=(0,8))
+        search_entry.bind('<KeyRelease>',lambda event:self.refresh_report_history())
+        ttk.Button(searchbar,text='Refresh',style='Compact.TButton',
+                   command=self.refresh_report_history).pack(side='left')
+        columns=('started','well','job','engineer','duration','source','status')
+        table_frame=ttk.Frame(self.report_history_panel);table_frame.pack(fill='both',expand=True)
+        self.report_history_tree=ttk.Treeview(table_frame,columns=columns,show='headings',
+                                               selectmode='browse',height=9)
+        headings={'started':'Started','well':'Well / Recording','job':'Job',
+                  'engineer':'Engineer','duration':'Duration','source':'Source','status':'Status'}
+        widths={'started':165,'well':220,'job':200,'engineer':170,
+                'duration':95,'source':115,'status':100}
+        for col in columns:
+            self.report_history_tree.heading(col,text=headings[col])
+            self.report_history_tree.column(col,width=widths[col],minwidth=75,
+                          anchor='center' if col in ('duration','source','status') else 'w')
+        vscroll=ttk.Scrollbar(table_frame,orient='vertical',command=self.report_history_tree.yview)
+        hscroll=ttk.Scrollbar(table_frame,orient='horizontal',command=self.report_history_tree.xview)
+        self.report_history_tree.configure(yscrollcommand=vscroll.set,xscrollcommand=hscroll.set)
+        table_frame.rowconfigure(0,weight=1);table_frame.columnconfigure(0,weight=1)
+        self.report_history_tree.grid(row=0,column=0,sticky='nsew')
+        vscroll.grid(row=0,column=1,sticky='ns')
+        hscroll.grid(row=1,column=0,sticky='ew')
+        self.report_history_tree.tag_configure('alternate',background='#edf4f6')
+        self.report_history_tree.bind('<<TreeviewSelect>>',self.choose_report_history_record)
+        self.report_history_tree.bind('<Double-1>',self.choose_report_history_record)
+        self.report_history_count=ttk.Label(self.report_history_panel,text='',foreground='#576677')
+        self.report_history_count.pack(anchor='w',pady=(6,0))
         self.report_record_status=tk.StringVar(value='')
         ttk.Label(choose,textvariable=self.report_record_status,foreground='#576677').pack(anchor='w',pady=(12,0))
         self.report_continue_record=ttk.Button(one,text='Continue to Select Interval  >',
@@ -670,6 +704,56 @@ class App(tk.Tk):
         self.report_range_sid=None
         self.show_report_step(1,validate=False)
 
+    def toggle_report_history(self):
+        if self.report_history_panel.winfo_manager():
+            self.report_history_panel.pack_forget()
+            self.report_history_button.configure(text='Select from History  ▾')
+        else:
+            self.refresh_report_history()
+            self.report_history_panel.pack(fill='both',expand=True,pady=(6,0),
+                                           before=self.report_record_status)
+            self.report_history_button.configure(text='Hide Recordings  ▴')
+
+    def refresh_report_history(self):
+        tree=self.report_history_tree
+        previous=tree.selection()
+        previous=previous[0] if previous else getattr(self,'reporting_sid',None)
+        for item in tree.get_children():tree.delete(item)
+        records=self.store.sessions(self.report_history_search.get().strip())
+        for index,session in enumerate(records):
+            details=json.loads(session['details'])
+            finish=session['ended'] or self.store.stats(session['id'])['last'] or session['started']
+            minutes,seconds=divmod(int(max(0,finish-session['started'])),60)
+            offset=json.loads(session['settings']).get('utc_offset',8)
+            tree.insert('','end',iid=session['id'],
+                tags=('alternate',) if index%2 else (),
+                values=(stamp(session['started'],offset)[:19].replace('T',' '),
+                        details.get('well') or session['name'],
+                        details.get('job') or '—',
+                        details.get('engineer') or '—',
+                        f'{minutes}m {seconds:02d}s',session['mode'],session['state']))
+        self.report_history_count.configure(text=f'{len(records)} recording(s) found • Click a row to select')
+        if previous and tree.exists(previous):
+            tree.selection_set(previous)
+            tree.see(previous)
+
+    def choose_report_history_record(self,event=None):
+        selected=self.report_history_tree.selection()
+        if not selected:return
+        sid=selected[0]
+        session=self.store.get(sid)
+        if not session:return
+        if sid!=getattr(self,'reporting_sid',None):
+            self.reporting_sid=sid
+            self.report_range_mode.set('full')
+            self.report_range_sid=None
+            self.report_inline_sid=None
+            self.report_range_canvas=None
+            self.refresh_reporting()
+        self.report_continue_record.configure(state='normal')
+        if event is not None and getattr(event,'type',None)==4:
+            pass
+
     def show_report_step(self,step,validate=True):
         if step not in (1,2,3):return
         sid=getattr(self,'reporting_sid',None)
@@ -690,6 +774,8 @@ class App(tk.Tk):
                              activebackground=TEAL_DARK if active else PALE_TEAL,
                              activeforeground='white' if active else INK,highlightthickness=0)
         self.report_continue_record.configure(state='normal' if sid and self.store.get(sid) else 'disabled')
+        if step==1:
+            self.refresh_reporting()
         if step==2:self.refresh_inline_range_graph()
         if step==3:self.refresh_reporting()
 
@@ -701,6 +787,8 @@ class App(tk.Tk):
         self.report_range_mode.set('full')
         self.report_range_sid=None
         self.report_inline_sid=None
+        self.report_range_canvas=None
+        self.refresh_reporting()
         self.show_report_step(1,validate=False)
         self.show('Reporting')
 
