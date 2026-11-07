@@ -90,7 +90,7 @@ class App(tk.Tk):
         except (OSError,ValueError): pass
         self.store=Store(DATA/'recordings.sqlite'); self.store.recover(); self.engine=Engine(self.store); self.engine.start()
         self.sid=None; self.detail_sid=None; self.connected=False; self.latest=None; self.buffer=deque(maxlen=7200); self.viewer_sid=None
-        self.save_job=None; self.edit_loading=False; self.closing=False; self.shutdown_warning_shown=False; self.last_plot=0; self.rec_count=0; self.rec_errors=0; self.pending=False; self.details_user_visible=True
+        self.save_job=None; self.edit_loading=False; self.closing=False; self._shutdown_complete=False; self._tick_after_id=None; self.shutdown_warning_shown=False; self.last_plot=0; self.rec_count=0; self.rec_errors=0; self.pending=False; self.details_user_visible=True
         self.configure(bg=BG); style=ttk.Style(self); style.theme_use('clam')
         style.configure('.',font=(UI_FONT,10),background=BG,foreground=INK)
         style.configure('TFrame',background=BG)
@@ -137,7 +137,7 @@ class App(tk.Tk):
         self.bind_all('<Button-5>',self.scroll_page,add='+')
         self.protocol('WM_DELETE_WINDOW',self.close)
         self.bind_all('<Control-q>',lambda event:self.close(),add='+')
-        self.after(50,self.tick)
+        self._tick_after_id=self.after(50,self.tick)
         if self.settings.get('auto_connect') and (self.settings['mode']=='Simulation' or self.settings['port']): self.after(200,self.connect)
     def show(self,name):
         if name=='About':
@@ -943,7 +943,7 @@ class App(tk.Tk):
                 self.lax.set_autoscaley_on(self.live_auto.get());self.lax.relim();self.lax.autoscale_view(scaley=self.live_auto.get());self.lax.set_xlim(max(rows[0]['ts'],end-seconds),max(end,rows[0]['ts']+1))
             self.lcanvas.draw_idle()
         self.update_enhancements()
-        self.after(80,self.tick)
+        self._tick_after_id=self.after(80,self.tick)
     def _shutdown_trace(self,message):
         """Local diagnostic trail when a Windows close request appears stuck."""
         try:
@@ -957,6 +957,11 @@ class App(tk.Tk):
         if not self.closing:return
         if not self.engine.is_alive():
             self._shutdown_trace('worker stopped; destroying window')
+            if self._tick_after_id is not None:
+                try:self.after_cancel(self._tick_after_id)
+                except tk.TclError:pass
+                self._tick_after_id=None
+            self._shutdown_complete=True
             try:
                 self.instance_lock.close()
             finally:
@@ -994,6 +999,10 @@ class App(tk.Tk):
                 'Recording details could not be saved. Please retry.\n'+str(exc),parent=self)
             return
         self.closing=True
+        if self._tick_after_id is not None:
+            try:self.after_cancel(self._tick_after_id)
+            except tk.TclError:pass
+            self._tick_after_id=None
         self.close_started=time.monotonic()
         self.shutdown_warning_shown=False
         self.footer.config(text='Saving and closing...')
