@@ -23,7 +23,7 @@ class Simulator:
     def read(self):
         if self.drop: raise TimeoutError('Simulated cable disconnected')
         t = (time.monotonic() - self.start) % 120
-        v = 2450 * (t/25 if t < 25 else 1 if t < 85 else max(0, 1-(t-85)/25))
+        v = 5000 * (t/25 if t < 25 else 1 if t < 85 else max(0, 1-(t-85)/25))
         return round(max(0,v+self.rng.uniform(-4,4)),1), 'OK', None, None
     def close(self): pass
 
