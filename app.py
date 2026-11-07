@@ -140,7 +140,7 @@ class App(tk.Tk):
         self.host=ttk.Frame(self,padding=14); self.host.pack(fill='both',expand=True)
         self.pages={name:ttk.Frame(self.host) for name in ['Live Monitor','History','Reporting','Settings','About','Viewer']}
         self.make_live(); self.make_history(); self.make_reporting(); self.make_settings(); self.make_about(); self.make_viewer(); self.enhance(); self.show('Live Monitor')
-        # Route mouse-wheel scrolling only to the Settings page or Viewer sidebar.
+        # Route mouse-wheel scrolling to the active scrollable page.
         self.bind_all('<MouseWheel>',self.scroll_page,add='+')
         self.bind_all('<Button-4>',self.scroll_page,add='+')
         self.bind_all('<Button-5>',self.scroll_page,add='+')
@@ -637,22 +637,70 @@ class App(tk.Tk):
         ttk.Label(actions,text=str(DATA),wraplength=360).pack(anchor='w',pady=(2,18))
         ttk.Button(actions,text='Save and reconnect',command=self.apply_settings,style='Accent.TButton').pack(anchor='w')
     def make_about(self):
-        p=self.pages['About']
-        ttk.Label(p,text='About Digital Pressure Recorder',style='Title.TLabel').pack(anchor='w',pady=(8,16))
-        about=ttk.LabelFrame(p,text='Application information',padding=20)
-        about.pack(fill='x',padx=4,pady=(0,12))
-        ttk.Label(about,text='Digital Pressure Recorder',font=(UI_FONT,16,'bold')).pack(anchor='w')
-        ttk.Label(about,text='Version: 1.0').pack(anchor='w',pady=(4,16))
-        ttk.Label(about,text='Supported devices',font=(UI_FONT,11,'bold')).pack(anchor='w',pady=(0,6))
-        ttk.Label(about,text='• Aplisens PMS-970 / Modbus RTU').pack(anchor='w',pady=3)
-        ttk.Label(about,text='• Next device coming soon — submit a request using the contact emails below.').pack(anchor='w',pady=3)
-        ttk.Separator(about).pack(fill='x',pady=(16,12))
-        ttk.Label(about,text='A software by Eka Yudhi Pratama',font=(UI_FONT,10,'bold')).pack(anchor='w',pady=(0,6))
-        ttk.Label(about,text='epratama2@slb.com / just_eka@ymail.com').pack(anchor='w')
-        ttk.Separator(about).pack(fill='x',pady=(16,12))
-        ttk.Label(about,text='Status key',font=(UI_FONT,11,'bold')).pack(anchor='w',pady=(0,6))
-        for label,color in [('LIVE','#137a45'),('DISCONNECTED','#b55c00'),('RECORDING','#c92c38'),('REC OFF','#576677')]:
-            tk.Label(about,text='●  '+label,bg=BG,fg=color,font=(UI_FONT,10)).pack(anchor='w',pady=3)
+        host=self.pages['About']
+        canvas=tk.Canvas(host,bg=BG,highlightthickness=0)
+        scrollbar=ttk.Scrollbar(host,orient='vertical',command=canvas.yview)
+        scrollbar.pack(side='right',fill='y')
+        canvas.pack(side='left',fill='both',expand=True)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        outer=ttk.Frame(canvas,padding=(4,4,18,24))
+        window=canvas.create_window((0,0),window=outer,anchor='nw')
+        outer.bind('<Configure>',lambda event:canvas.configure(scrollregion=canvas.bbox('all')))
+        canvas.bind('<Configure>',lambda event:canvas.itemconfigure(window,width=event.width))
+        self.about_canvas=canvas
+        ttk.Label(outer,text='About Digital Pressure Recorder',style='Title.TLabel').pack(anchor='w',pady=(8,16))
+        content=ttk.Frame(outer)
+        content.pack(anchor='w',fill='x')
+        # Constrain content width for comfortable reading on maximized screens.
+        def size_content(event):
+            content.configure(width=min(max(event.width-30,400),950))
+        outer.bind('<Configure>',lambda event:(canvas.configure(scrollregion=canvas.bbox('all')),size_content(event)),add='+')
+        content.pack_propagate(False)
+        # Allow the inner frame to determine its height while retaining a width cap.
+        content.pack_propagate(True)
+        def section_title(text):
+            ttk.Label(content,text=text,font=(UI_FONT,12,'bold')).pack(anchor='w',pady=(14,7))
+        def paragraph(text,space=7):
+            ttk.Label(content,text=text,wraplength=880,justify='left').pack(anchor='w',fill='x',pady=(0,space))
+        ttk.Label(content,text='Digital Pressure Recorder',font=(UI_FONT,18,'bold')).pack(anchor='w',pady=(0,4))
+        ttk.Label(content,text='A software by Eka Yudhi Pratama',font=(UI_FONT,10,'bold')).pack(anchor='w')
+        ttk.Label(content,text='Version 1.0  •  November 2026').pack(anchor='w',pady=(5,12))
+        paragraph('A Windows desktop application for real-time pressure monitoring, recording, and analysis using industrial pressure transmitters via Modbus RTU.')
+        ttk.Separator(content).pack(fill='x',pady=(8,4))
+        section_title('Key features')
+        features=[
+            ('Real-Time Pressure Monitoring','View live pressure readings with a continuously updating graph, connection status, and configurable display units (psi, bar, kPa, MPa).'),
+            ('Pressure Data Recording','Record pressure measurements into organized sessions, with a configurable acquisition interval. Recommended interval: 0.5 seconds.'),
+            ('Event Annotations','Mark important operational events during recording to provide context when reviewing pressure trends.'),
+            ('Recording History & Analysis','Review previously recorded sessions with interactive graphs, zoom and pan controls, pressure statistics, and event markers.'),
+            ('Reporting','Generate reports from recorded pressure data for documentation and operational review.'),
+            ('Device Configuration','Configure serial port, baud rate, Modbus parameters, sampling interval, display units, and UTC offset.'),
+            ('Simulation Mode','Test the monitoring and recording workflow without connecting physical hardware.'),
+        ]
+        for name,description in features:
+            ttk.Label(content,text=name,font=(UI_FONT,10,'bold')).pack(anchor='w',pady=(9,3))
+            paragraph(description,4)
+        ttk.Separator(content).pack(fill='x',pady=(14,4))
+        section_title('Supported devices')
+        paragraph('• Aplisens PMS-970 — Modbus RTU')
+        paragraph('• More devices coming soon. Contact the developer to request support for additional hardware.')
+        ttk.Separator(content).pack(fill='x',pady=(14,4))
+        section_title('Status key')
+        for name,description,color in [
+            ('LIVE','Receiving valid readings','#137a45'),
+            ('DISCONNECTED','No active device connection','#b55c00'),
+            ('RECORDING','Saving pressure data','#c92c38'),
+            ('REC OFF','Recording inactive','#576677'),
+        ]:
+            line=ttk.Frame(content);line.pack(fill='x',pady=4)
+            tk.Label(line,text='●  '+name,bg=BG,fg=color,font=(UI_FONT,10),width=18,anchor='w').pack(side='left')
+            ttk.Label(line,text=description).pack(side='left')
+        ttk.Separator(content).pack(fill='x',pady=(14,4))
+        section_title('Developer & Contact')
+        paragraph('Eka Yudhi Pratama')
+        paragraph('epratama2@slb.com')
+        paragraph('just_eka@ymail.com')
+        ttk.Label(content,text='Digital Pressure Recorder  •  Version 1.0  •  November 2026').pack(anchor='w',pady=(15,10))
 
     def find_ports(self):
         from serial.tools.list_ports import comports
@@ -1236,8 +1284,9 @@ class App(tk.Tk):
         self.find_ports()
 
     def scroll_page(self,event):
-        if getattr(self,'page',None)!='Settings':return
-        canvas=self.settings_canvas
+        page=getattr(self,'page',None)
+        if page not in ('Settings','About'):return
+        canvas=self.settings_canvas if page=='Settings' else self.about_canvas
         target=self.winfo_containing(event.x_root,event.y_root)
         current=target
         while current is not None and current!=canvas:
