@@ -67,3 +67,26 @@ def test_second_instance_rejected(tmp_path):
     lock=InstanceLock(tmp_path/'lock')
     with pytest.raises(RuntimeError):InstanceLock(tmp_path/'lock')
     lock.close();second=InstanceLock(tmp_path/'lock');second.close()
+
+def test_delete_annotation_and_recording(tmp_path):
+    st=Store(tmp_path/'db')
+    sid=st.start(DEFAULTS,1000)
+    sample=dict(ts=1001,elapsed=1,value=1200,quality='OK',raw=None,status=None,latency=.01)
+    st.add_sample(sid,sample)
+    st.event(sid,1001,'RIH','Review')
+    event=st.events(sid)[0]
+    assert not st.delete_event(event['id'],'wrong-session')
+    assert len(st.events(sid))==1
+    assert st.delete_event(event['id'],sid)
+    assert st.events(sid)==[]
+    st.event(sid,1001,'POOH','Review')
+    import pytest
+    with pytest.raises(ValueError,match='active'):
+        st.delete_session(sid)
+    assert st.get(sid) is not None
+    st.finish(sid)
+    assert st.delete_session(sid)
+    assert st.sessions()==[]
+    assert st.stats(sid)['n']==0
+    assert st.events(sid)==[]
+    assert not st.delete_session(sid)
