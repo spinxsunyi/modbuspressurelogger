@@ -112,7 +112,14 @@ try:
     a.load_viewer(sid);pump(.4)
     # Full-width Viewer: summary, read-only metadata and annotations below the chart.
     assert a.viewer_summary_vars['duration'].get().endswith('s')
-    assert a.viewer_summary_vars['size'].get()=='— (shared DB)'
+    assert 'size' not in a.viewer_summary_vars
+    for panel_name in ('Job details','Annotations'):
+        panel,_=a.viewer_panels[panel_name]
+        assert panel.winfo_manager()=='pack'
+        a.toggle_viewer_panel(panel_name)
+        assert not panel.winfo_manager()
+        a.toggle_viewer_panel(panel_name)
+        assert panel.winfo_manager()
     assert 'UI TEST' in a.viewer_details.cget('text')
     assert a.vcanvas.get_tk_widget().winfo_manager()=='pack'
     assert a.history_slider.winfo_class()=='TScrollbar'
