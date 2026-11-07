@@ -1800,6 +1800,11 @@ class App(tk.Tk):
         end=max(.01,((self.vrows[-1]['ts'] if self.vrows else self.vsession['started']+60)-self.vsession['started'])/60)
         vals=[r['value'] for r in self.vrows if r['value'] is not None]; maximum=max(vals) if vals else 3000
         v={'title':d.get('well') or self.vsession['name'],'xmin':0,'xmax':end,'ymin':min(0,min(vals)) if vals else 0,'ymax':max(1,maximum*1.1),**json.loads(self.vsession['view'])}
+        # Saved chart limits may represent a tiny zoomed segment from an earlier
+        # review. Opening or refreshing a recording must always fit its full span.
+        v['xmin']=0
+        v['xmax']=end
+        self.history_window.set('All data')
         for k,var in self.view_vars.items():var.set(str(v[k]))
         self.paint_viewer(); self.show('Viewer')
     def view_values(self):
