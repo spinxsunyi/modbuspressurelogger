@@ -611,15 +611,20 @@ class App(tk.Tk):
         strip=ttk.Frame(p,padding=(10,7),relief='solid',borderwidth=1)
         strip.pack(fill='x',pady=(0,8))
         self.viewer_summary_vars={}
-        summary_fields=(('min','Min pressure'),('max','Max pressure'),
-                        ('start','Start'),('stop','Stop'),('duration','Duration'))
-        for index,(key,label) in enumerate(summary_fields):
-            strip.columnconfigure(index,weight=1)
-            cell=ttk.Frame(strip);cell.grid(row=0,column=index,sticky='ew',padx=(5,7))
-            ttk.Label(cell,text=label+':',font=(UI_FONT,9),foreground='#576677').pack(side='left')
-            var=tk.StringVar(value='—')
-            self.viewer_summary_vars[key]=var
-            ttk.Label(cell,textvariable=var,font=(UI_FONT,10,'bold')).pack(side='left',padx=(5,0))
+        summary_rows=((('min','Min pressure'),('max','Max pressure'),
+                       ('first_pressure','Start pressure'),('last_pressure','Last pressure')),
+                      (('start','Start time'),('stop','Stop time'),('duration','Duration')))
+        for row_index,fields in enumerate(summary_rows):
+            summary_row=ttk.Frame(strip)
+            summary_row.pack(fill='x',pady=(0,3) if row_index==0 else (3,0))
+            for index,(key,label) in enumerate(fields):
+                summary_row.columnconfigure(index,weight=1,uniform='summary')
+                cell=ttk.Frame(summary_row)
+                cell.grid(row=0,column=index,sticky='ew',padx=(5,7))
+                ttk.Label(cell,text=label+':',font=(UI_FONT,9),foreground='#576677').pack(side='left')
+                var=tk.StringVar(value='—')
+                self.viewer_summary_vars[key]=var
+                ttk.Label(cell,textvariable=var,font=(UI_FONT,10,'bold')).pack(side='left',padx=(5,0))
 
         self.viewer_toolbar=ttk.Frame(p);toolbar=self.viewer_toolbar
         toolbar.pack(fill='x',pady=(0,7))
@@ -762,12 +767,17 @@ class App(tk.Tk):
     def update_viewer_summary(self):
         if not self.viewer_sid:return
         lo,hi=self.recording_extrema(self.viewer_sid)
+        with self.store.connect() as c:
+            first=c.execute("SELECT value FROM samples WHERE session=? AND quality='OK' AND value IS NOT NULL ORDER BY ts ASC,id ASC LIMIT 1",(self.viewer_sid,)).fetchone()
+            last=c.execute("SELECT value FROM samples WHERE session=? AND quality='OK' AND value IS NOT NULL ORDER BY ts DESC,id DESC LIMIT 1",(self.viewer_sid,)).fetchone()
         session=self.vsession
         begin=session['started']
         stop=session['ended'] or self.store.stats(self.viewer_sid)['last']
         elapsed=max(0,int((stop or begin)-begin))
         values={'min':'—' if lo is None else f'{from_psi(lo,self.settings["unit"]):,.2f} {self.settings["unit"]}',
                 'max':'—' if hi is None else f'{from_psi(hi,self.settings["unit"]):,.2f} {self.settings["unit"]}',
+                'first_pressure':'—' if first is None else f'{from_psi(first["value"],self.settings["unit"]):,.2f} {self.settings["unit"]}',
+                'last_pressure':'—' if last is None else f'{from_psi(last["value"],self.settings["unit"]):,.2f} {self.settings["unit"]}',
                 'start':stamp(begin,self.settings['utc_offset'])[11:19],
                 'stop':stamp(stop,self.settings['utc_offset'])[11:19] if stop else '—',
                 'duration':f'{elapsed//60}m {elapsed%60:02}s'}
