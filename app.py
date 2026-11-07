@@ -779,13 +779,25 @@ class App(tk.Tk):
         win=tk.Toplevel(self);win.title('Manual scale options');win.transient(self)
         win.resizable(False,False);self.viewer_scale_dialog=win
         content=ttk.Frame(win,padding=14);content.pack(fill='both',expand=True)
+        display_limits={}
         for i,(label,key) in enumerate((('Pressure min','ymin'),('Pressure max','ymax'))):
-            ttk.Label(content,text=label).grid(row=i,column=0,sticky='w',pady=5,padx=(0,12))
-            ttk.Entry(content,textvariable=self.view_vars[key],width=14).grid(row=i,column=1,pady=5)
+            ttk.Label(content,text=label+' ('+self.settings['unit']+')').grid(row=i,column=0,sticky='w',pady=5,padx=(0,12))
+            display_limits[key]=tk.StringVar(value=f'{from_psi(float(self.view_vars[key].get()),self.settings["unit"]):.5f}')
+            ttk.Entry(content,textvariable=display_limits[key],width=14).grid(row=i,column=1,pady=5)
+        def apply_display_limits():
+            try:
+                lo=to_psi(float(display_limits['ymin'].get()),self.settings['unit'])
+                hi=to_psi(float(display_limits['ymax'].get()),self.settings['unit'])
+                if not math.isfinite(lo) or not math.isfinite(hi) or lo>=hi:
+                    raise ValueError('Minimum must be lower than maximum.')
+                self.view_vars['ymin'].set(str(lo))
+                self.view_vars['ymax'].set(str(hi))
+                self.apply_view()
+            except ValueError as exc:messagebox.showerror('Pressure scale',str(exc),parent=win)
         ttk.Checkbutton(content,text='Show event labels',variable=self.history_labels,
                         command=self.paint_viewer).grid(row=2,column=0,columnspan=2,sticky='w',pady=8)
         ttk.Button(content,text='Apply manual scale',style='Compact.TButton',
-                   command=self.apply_view).grid(row=3,column=0,columnspan=2,sticky='ew',pady=(6,3))
+                   command=apply_display_limits).grid(row=3,column=0,columnspan=2,sticky='ew',pady=(6,3))
         ttk.Button(content,text='Close',style='Compact.TButton',
                    command=win.destroy).grid(row=4,column=0,columnspan=2,sticky='ew')
 
