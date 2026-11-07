@@ -11,7 +11,7 @@ from seed_demo import seed
 from units import from_psi,to_psi
 from instance import InstanceLock
 from exports import export,stamp
-from report_page import report_figure,report_figures,graph_figure,report_name
+from report_page import report_figure,report_figures,graph_figure,report_name,apply_report_time_scale
 from app_icon import set_window_icon, gauge_image
 from PIL import ImageTk
 
@@ -1162,10 +1162,9 @@ class App(tk.Tk):
         self.report_graph_start=start
         self.report_graph_offset=json.loads(session['settings']).get('utc_offset',8)
         self.report_graph_line,=ax.plot([],[],color=TEAL,lw=1.2)
-        ax.set_xlim(0,duration)
+        apply_report_time_scale(ax,0,duration)
         ax.set_ylabel('Pressure ('+self.report_unit.get()+')')
         ax.set_xlabel('Elapsed time (minutes)')
-        ax.xaxis.set_major_locator(MaxNLocator(9))
         apply_engineering_grid(ax)
         self.report_graph_events=self.store.events(sid)
         self.populate_report_events(sid)
@@ -1241,7 +1240,7 @@ class App(tk.Tk):
         canvas.mpl_connect('scroll_event',wheel)
         self.report_range_canvas=canvas
         self.report_inline_sid=sid
-        self.set_report_x_view_fields(0,duration)
+        self.set_report_x_view_fields(*ax.get_xlim())
         self.update_report_graph_options()
         self.change_report_range_mode()
         canvas.draw()
@@ -1348,7 +1347,6 @@ class App(tk.Tk):
             self.report_xfrom_label.configure(text='View X from (min)')
             ax.xaxis.set_major_formatter(FuncFormatter(lambda x,pos:f'{x:g}'))
             ax.set_xlabel('Elapsed time (minutes)')
-        ax.xaxis.set_major_locator(MaxNLocator(8))
         apply_engineering_grid(ax, self.report_grid.get())
         ax.relim()
         if not self.report_ymin.get().strip() and not self.report_ymax.get().strip():
@@ -1377,7 +1375,8 @@ class App(tk.Tk):
 
     def reset_report_zoom(self):
         if not getattr(self,'report_range_canvas',None):return
-        self.set_report_x_view_fields(0,self.report_range_duration)
+        apply_report_time_scale(self.report_range_axes,0,self.report_range_duration)
+        self.set_report_x_view_fields(*self.report_range_axes.get_xlim())
         self.report_ymin.set('');self.report_ymax.set('')
         self.apply_report_scale()
 
