@@ -1823,7 +1823,7 @@ class App(tk.Tk):
                ylabel='Pressure ('+self.settings['unit']+')',
                xlim=(v['xmin'],v['xmax']),ylim=(v['ymin'],v['ymax']))
         ax.yaxis.set_major_formatter(FuncFormatter(lambda p,pos:f'{from_psi(p,self.settings["unit"]):,.1f}'))
-        apply_pressure_grid(ax,v['ymin'],v['ymax'])
+        apply_pressure_grid(ax,v['ymin'],v['ymax'],unit=self.settings['unit'],raw_psi=True)
         apply_engineering_grid(ax)
         if self.viewer_time_display.get()=='Date & time':
             from datetime import datetime,timezone,timedelta
@@ -2117,7 +2117,7 @@ class App(tk.Tk):
             self.lax.set_xlabel(date+'  |  UTC'+f'{self.settings["utc_offset"]:+g}')
             if self.follow.get():
                 self.lax.set_autoscaley_on(self.live_auto.get());self.lax.relim();self.lax.autoscale_view(scaley=self.live_auto.get());self.lax.set_xlim(max(self.live_window_origin if self.live_window_origin is not None else rows[0]['ts'],end-seconds),max(self.live_window_origin if self.live_window_origin is not None else rows[0]['ts'],end-seconds)+seconds if seconds<1e19 else max(end,rows[0]['ts']+1))
-            apply_pressure_grid(self.lax,*self.lax.get_ylim())
+            apply_pressure_grid(self.lax,*self.lax.get_ylim(),unit=self.settings['unit'],raw_psi=True)
             self.lcanvas.draw_idle()
         self._check_connection_watchdog()
         self._check_modbus_timeout()
