@@ -34,18 +34,26 @@ def export(store,sid,path,view,selected=False,resolution=None):
     columns=['timestamp','elapsed_seconds','pressure','unit','quality','raw_register','status_register','latency_seconds']
     def values(r): return [stamp(r['ts'],offset),r['elapsed'],r['value'],'psi',r['quality'],r['raw'],r['status'],r['latency']]
     def data_rows(cursor,interval):
-        # Retain actual samples only. Choose the first available reading at or
-        # after each target time, anchored to the recording's start timestamp.
+        # Each target is aligned to recording start, never to row count.
+        # Keep the first actual sample at or after each target, provided it
+        # falls within that target's interval. Missing intervals stay missing.
         if interval is None:
-            for r in cursor: yield values(r)
+            for r in cursor:
+                yield values(r)
             return
-        next_target=None
+        start=session['started']
+        last_bucket=None
         for r in cursor:
-            if next_target is None:
-                next_target=session['started']+math.ceil(max(0,r['ts']-session['started'])/interval-1e-9)*interval
-            if r['ts']+1e-9 < next_target: continue
+            elapsed=max(0.0,r['ts']-start)
+            bucket=math.floor((elapsed+1e-7)/interval)
+            # For a selected range beginning between targets, skip samples
+            # until the next scheduled boundary.
+            if elapsed+1e-7 < bucket*interval:
+                continue
+            if bucket==last_bucket:
+                continue
+            last_bucket=bucket
             yield values(r)
-            next_target+=max(1,math.floor((r['ts']-next_target)/interval)+1)*interval
     try:
         with store.connect() as c:
             c.execute('BEGIN')
