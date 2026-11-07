@@ -482,7 +482,7 @@ class App(tk.Tk):
         strip.pack(fill='x',pady=(0,8))
         self.viewer_summary_vars={}
         summary_fields=(('min','Min pressure'),('max','Max pressure'),
-                        ('start','Start'),('stop','Stop'),('duration','Duration'),('size','File size'))
+                        ('start','Start'),('stop','Stop'),('duration','Duration'))
         for index,(key,label) in enumerate(summary_fields):
             strip.columnconfigure(index,weight=1)
             cell=ttk.Frame(strip);cell.grid(row=0,column=index,sticky='ew',padx=(5,7))
@@ -517,10 +517,20 @@ class App(tk.Tk):
         bottom=ttk.Frame(p);bottom.pack(side='bottom',fill='x',pady=(8,0))
         bottom.columnconfigure(0,weight=1,uniform='bottom')
         bottom.columnconfigure(1,weight=1,uniform='bottom')
-        details=ttk.LabelFrame(bottom,text='Job details',padding=8)
-        details.grid(row=0,column=0,sticky='nsew',padx=(0,7))
-        annotations=ttk.LabelFrame(bottom,text='Annotations',padding=8)
-        annotations.grid(row=0,column=1,sticky='nsew',padx=(7,0))
+        self.viewer_panels={}
+        for col,title in enumerate(('Job details','Annotations')):
+            outer=ttk.Frame(bottom)
+            outer.grid(row=0,column=col,sticky='nsew',
+                       padx=(0,7) if col==0 else (7,0))
+            heading=ttk.Frame(outer);heading.pack(fill='x')
+            toggle=ttk.Button(heading,text='▾ '+title,style='Compact.TButton',
+                              command=lambda name=title:self.toggle_viewer_panel(name))
+            toggle.pack(side='left')
+            body=ttk.Frame(outer,padding=8,relief='solid',borderwidth=1)
+            body.pack(fill='x',pady=(4,0))
+            self.viewer_panels[title]=(body,toggle)
+        details=self.viewer_panels['Job details'][0]
+        annotations=self.viewer_panels['Annotations'][0]
         details.columnconfigure(0,weight=1);details.columnconfigure(1,weight=1)
         self.viewer_details=ttk.Label(details,text='—',justify='left',anchor='nw')
         self.viewer_details.grid(row=0,column=0,sticky='nw',padx=(4,12),pady=(2,6))
@@ -543,6 +553,15 @@ class App(tk.Tk):
         self.events_tree.bind('<Double-1>',lambda e:self.edit_annotation())
         self.events_tree.bind('<<TreeviewSelect>>',self.select_history_event)
         self.annotation_time=tk.StringVar(value='0')
+
+    def toggle_viewer_panel(self,name):
+        body,toggle=self.viewer_panels[name]
+        if body.winfo_manager():
+            body.pack_forget()
+            toggle.configure(text='▸ '+name)
+        else:
+            body.pack(fill='x',pady=(4,0))
+            toggle.configure(text='▾ '+name)
 
         chart=ttk.Frame(p);chart.pack(fill='both',expand=True)
         self.vfig,self.vax,self.vcanvas=self.plot(chart)
@@ -617,9 +636,7 @@ class App(tk.Tk):
                 'max':'—' if hi is None else f'{hi:,.2f} {session["unit"]}',
                 'start':stamp(begin,self.settings['utc_offset'])[11:19],
                 'stop':stamp(stop,self.settings['utc_offset'])[11:19] if stop else '—',
-                'duration':f'{elapsed//60}m {elapsed%60:02}s',
-                # All sessions share one SQLite database: no individual file exists.
-                'size':'— (shared DB)'}
+                'duration':f'{elapsed//60}m {elapsed%60:02}s'}
         for name,value in values.items():self.viewer_summary_vars[name].set(value)
 
     def select_viewer_scale(self):
@@ -655,10 +672,47 @@ class App(tk.Tk):
             if label:self.store.event(self.viewer_sid,ts,label,'Review');self.vevents=self.store.events(self.viewer_sid);self.paint_viewer()
         except Exception as e:messagebox.showerror('Annotation',str(e))
     def edit_annotation(self):
-        sel=self.events_tree.selection()
-        if not sel:return
-        event=next(e for e in self.vevents if e['id']==int(sel[0])); label=simpledialog.askstring('Edit annotation','Label:',initialvalue=event['label'],parent=self)
-        if label:self.store.edit_event(event['id'],event['ts'],label);self.vevents=self.store.events(self.viewer_sid);self.paint_viewer()
+        selected=self.events_tree.selection()
+        if not selected:return
+        event=next((e for e in self.vevents if str(e['id'])==selected[0]),None)
+        if not event:return
+        start=self.vsession['started']
+        elapsed=max(0,int(round(event['ts']-start)))
+        win=tk.Toplevel(self);win.title('Edit annotation');win.transient(self)
+        win.resizable(False,False)
+        body=ttk.Frame(win,padding=14);body.pack(fill='both',expand=True)
+        ttk.Label(body,text='Elapsed time (mm:ss)').grid(row=0,column=0,sticky='w',padx=(0,12),pady=6)
+        time_var=tk.StringVar(value=f'{elapsed//60:02}:{elapsed%60:02}')
+        ttk.Entry(body,textvariable=time_var,width=20).grid(row=0,column=1,sticky='ew',pady=6)
+        ttk.Label(body,text='Label').grid(row=1,column=0,sticky='w',padx=(0,12),pady=6)
+        label_var=tk.StringVar(value=event['label'])
+        ttk.Entry(body,textvariable=label_var,width=30).grid(row=1,column=1,sticky='ew',pady=6)
+        def save():
+            try:
+                raw=time_var.get().strip()
+                parts=raw.split(':')
+                if len(parts)!=2 or not all(part.isdigit() for part in parts):
+                    raise ValueError('Enter elapsed time as mm:ss, for example 01:30.')
+                minutes,seconds=map(int,parts)
+                if seconds>=60:raise ValueError('Seconds must be between 00 and 59.')
+                ts=start+minutes*60+seconds
+                last=self.vsession['ended'] or self.store.stats(self.viewer_sid)['last'] or start
+                if not start<=ts<=last:raise ValueError('Annotation time must be within the recording.')
+                label=label_var.get().strip()
+                if not label:raise ValueError('Annotation label cannot be empty.')
+                self.store.edit_event(event['id'],ts,label)
+                self.vevents=self.store.events(self.viewer_sid)
+                self.paint_viewer()
+                self.events_tree.selection_set(str(event['id']))
+                self.events_tree.see(str(event['id']))
+                win.destroy()
+            except ValueError as exc:messagebox.showerror('Edit annotation',str(exc),parent=win)
+        buttons=ttk.Frame(body);buttons.grid(row=2,column=0,columnspan=2,sticky='e',pady=(12,0))
+        ttk.Button(buttons,text='Cancel',style='Compact.TButton',command=win.destroy).pack(side='right',padx=(6,0))
+        ttk.Button(buttons,text='Save changes',style='Compact.TButton',command=save).pack(side='right')
+        win.bind('<Return>',lambda e:save())
+        win.grab_set()
+
     def edit_viewer_details(self):
         if self.save_job:self.after_cancel(self.save_job);self.save_details()
         sid=self.viewer_sid; d=json.loads(self.store.get(sid)['details']); win=tk.Toplevel(self);win.title('Job details'); vars={}
