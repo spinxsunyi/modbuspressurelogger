@@ -13,10 +13,10 @@ def figure(rows,events,session,view):
     ax.plot([(r['ts']-start)/60 for r in rows], [r['value'] if r['quality']=='OK' and r['value'] is not None else math.nan for r in rows],color='#008b92',lw=1.3)
     for e in events:
         x=(e['ts']-start)/60; ax.axvline(x,color='#cc8b19',lw=.8,ls='--'); ax.annotate(e['label'],(x,.97),xycoords=('data','axes fraction'),rotation=90,va='top',fontsize=8)
-    ax.set(xlabel='Elapsed time (minutes)',ylabel=f"Pressure ({session['unit']})",title=view.get('title') or session['name'])
+    ax.set(xlabel='Elapsed time (minutes)',ylabel=f"Pressure ({'psi'})",title=view.get('title') or session['name'])
     if view.get('ymin') is not None and view.get('ymax') is not None: ax.set_ylim(view['ymin'],view['ymax'])
     if view.get('xmin') is not None and view.get('xmax') is not None: ax.set_xlim(view['xmin'],view['xmax'])
-    ax.grid(alpha=.2); fig.text(.01,.01,f"{session['mode'].upper()} | Start: {stamp(start,offset)}",fontsize=8); fig.text(.5,.01,f"Recording min: {view.get('recording_min', '—')} | max: {view.get('recording_max', '—')} {session['unit']}",fontsize=8); fig.tight_layout(rect=(0,.04,1,1)); return fig
+    ax.grid(alpha=.2); fig.text(.01,.01,f"{session['mode'].upper()} | Start: {stamp(start,offset)}",fontsize=8); fig.text(.5,.01,f"Recording min: {view.get('recording_min', '—')} | max: {view.get('recording_max', '—')} {'psi'}",fontsize=8); fig.tight_layout(rect=(0,.04,1,1)); return fig
 
 def export(store,sid,path,view,selected=False):
     path=Path(path); tmp=path.with_name(path.stem+'.partial'+path.suffix)
@@ -29,7 +29,7 @@ def export(store,sid,path,view,selected=False):
     if not selected:
         view.pop('xmin',None); view.pop('xmax',None)
     columns=['timestamp','elapsed_seconds','pressure','unit','quality','raw_register','status_register','latency_seconds']
-    def values(r): return [stamp(r['ts'],offset),r['elapsed'],r['value'],session['unit'],r['quality'],r['raw'],r['status'],r['latency']]
+    def values(r): return [stamp(r['ts'],offset),r['elapsed'],r['value'],'psi',r['quality'],r['raw'],r['status'],r['latency']]
     try:
         with store.connect() as c:
             c.execute('BEGIN')
@@ -44,7 +44,7 @@ def export(store,sid,path,view,selected=False):
                 import xlsxwriter
                 with xlsxwriter.Workbook(tmp,{'constant_memory':True,'strings_to_formulas':False,'strings_to_urls':False}) as book:
                     sh=book.add_worksheet('Summary'); sh.set_column(0,0,24); sh.set_column(1,1,65)
-                    meta={**{k:session[k] for k in ['name','mode','state','unit']},**json.loads(session['details']), 'start':stamp(session['started'],offset),'exported_at':stamp(__import__('time').time(),offset),'recording_minimum':extrema[0],'recording_maximum':extrema[1]}
+                    meta={**{k:('psi' if k=='unit' else session[k]) for k in ['name','mode','state','unit']},**json.loads(session['details']), 'start':stamp(session['started'],offset),'exported_at':stamp(__import__('time').time(),offset),'recording_minimum':extrema[0],'recording_maximum':extrema[1]}
                     for n,(k,v) in enumerate(meta.items()): sh.write_row(n,0,[k,str(v)])
                     sheet=None; row=0; part=0
                     for r in cursor:
