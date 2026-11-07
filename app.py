@@ -649,6 +649,10 @@ class App(tk.Tk):
         ttk.Separator(about).pack(fill='x',pady=(16,12))
         ttk.Label(about,text='A software by Eka Yudhi Pratama',font=(UI_FONT,10,'bold')).pack(anchor='w',pady=(0,6))
         ttk.Label(about,text='epratama2@slb.com / just_eka@ymail.com').pack(anchor='w')
+        ttk.Separator(about).pack(fill='x',pady=(16,12))
+        ttk.Label(about,text='Status key',font=(UI_FONT,11,'bold')).pack(anchor='w',pady=(0,6))
+        for label,color in [('LIVE','#137a45'),('DISCONNECTED','#b55c00'),('RECORDING','#c92c38'),('REC OFF','#576677')]:
+            tk.Label(about,text='●  '+label,bg=BG,fg=color,font=(UI_FONT,10)).pack(anchor='w',pady=3)
 
     def find_ports(self):
         from serial.tools.list_ports import comports
