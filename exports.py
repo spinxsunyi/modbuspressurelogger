@@ -68,6 +68,7 @@ def export(store,sid,path,view,selected=False,resolution=None):
                     subheading=book.add_format({'bold':True,'font_size':11,'font_color':teal})
                     label_style=book.add_format({'bold':True,'font_color':navy,'bg_color':pale,'bottom':1,'bottom_color':'#C5D7E0'})
                     value_style=book.add_format({'font_color':navy})
+                    excel_datetime=book.add_format({'num_format':'yyyy-mm-dd hh:mm:ss.000'})
                     table_header=book.add_format({'bold':True,'font_color':navy,'bg_color':pale,'border':1,'border_color':'#C5D7E0','text_wrap':True,'valign':'vcenter'})
                     details=json.loads(session['details'])
                     sh=book.add_worksheet('Summary')
@@ -84,6 +85,7 @@ def export(store,sid,path,view,selected=False,resolution=None):
                           'Exported at':stamp(time.time(),offset),'Selected from':stamp(lo,offset),
                           'Selected to':stamp(hi,offset),'Data resolution':'All Data' if resolution is None else f'{resolution:g} seconds',
                           'Recording acquisition interval (configured)':str(settings.get('interval','Unknown'))+' s',
+                          'Timestamp timezone':f'UTC{float(offset):+g}',
                           'Data treatment':'Original samples' if resolution is None else 'Downsampled original samples (no averaging or interpolation)',
                           'Recording minimum (psi)':extrema[0],'Recording maximum (psi)':extrema[1]}
                     for n,(key,value) in enumerate(meta.items(),6):
@@ -97,13 +99,18 @@ def export(store,sid,path,view,selected=False,resolution=None):
                             sheet.freeze_panes(1,0);sheet.set_column(0,0,32)
                             sheet.set_column(1,len(columns)-1,23)
                             row=1
-                        sheet.write_row(row,0,row_values);row+=1
+                        # Excel stores timestamps as numeric dates, not ISO text.
+                        local_dt=datetime.fromisoformat(row_values[0]).replace(tzinfo=None)
+                        sheet.write_datetime(row,0,local_dt,excel_datetime)
+                        sheet.write_row(row,1,row_values[1:]);row+=1
                     if sheet is None:
                         sheet=book.add_worksheet('Data_1');sheet.write_row(0,0,columns,table_header)
                     ev=book.add_worksheet('Events');ev.set_column(0,0,32);ev.set_column(1,1,55)
                     ev.write_row(0,0,['timestamp','label','kind'],table_header)
                     ev.freeze_panes(1,0)
-                    for n,e in enumerate(events,1):ev.write_row(n,0,[stamp(e['ts'],offset),e['label'],e['kind']])
+                    for n,e in enumerate(events,1):
+                        ev.write_datetime(n,0,datetime.fromtimestamp(e['ts'],timezone(timedelta(hours=float(offset)))).replace(tzinfo=None),excel_datetime)
+                        ev.write_row(n,1,[e['label'],e['kind']])
                     rows=[r for r in store.plot_rows(sid) if lo<=r['ts']<=hi]
                     fig=figure(rows,events,session,view);image=io.BytesIO();fig.savefig(image,format='png');image.seek(0)
                     chart=book.add_worksheet('Chart');chart.insert_image('A1','chart.png',{'image_data':image,'x_scale':.8,'y_scale':.8})
