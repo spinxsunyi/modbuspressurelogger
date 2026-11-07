@@ -40,6 +40,24 @@ def test_persistence_and_exports(tmp_path):
     for ext in ['csv','xlsx','png','pdf']:
         dest=tmp_path/('test.'+ext);export(st,sid,dest,view);assert dest.stat().st_size>200
     with zipfile.ZipFile(tmp_path/'test.xlsx') as z:assert b'<f>' not in z.read('xl/worksheets/sheet1.xml')
+    # The minute-based sheets retain elapsed seconds and add true elapsed minutes.
+    import xml.etree.ElementTree as ET
+    import pytest
+    with zipfile.ZipFile(tmp_path/'test.xlsx') as z:
+        namespace={'m':'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
+        for sheet_number,has_minutes in ((2,False),(3,False),(4,True),(5,True)):
+            root=ET.fromstring(z.read(f'xl/worksheets/sheet{sheet_number}.xml'))
+            header=root.find('m:sheetData/m:row',namespace)
+            headings=[cell.findtext('m:is/m:t',default='',namespaces=namespace) for cell in header]
+            assert ('elapsed_minute' in headings)==has_minutes
+            assert 'elapsed_seconds' in headings
+            if has_minutes:
+                data=root.findall('m:sheetData/m:row',namespace)
+                assert len(data)>1
+                values={cell.attrib['r']:float(cell.findtext('m:v',namespaces=namespace))
+                        for cell in data[1] if cell.find('m:v',namespace) is not None}
+                assert values['C2']==pytest.approx(values['B2']/60)
+
     export(st,sid,tmp_path/'range.csv',{**view,'xmin':.025,'xmax':.05},True)
     import csv
     with open(tmp_path/'range.csv',encoding='utf-8-sig',newline='') as f:
