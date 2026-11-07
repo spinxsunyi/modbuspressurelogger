@@ -710,8 +710,7 @@ class App(tk.Tk):
             self.report_history_button.configure(text='Select from History  ▾')
         else:
             self.refresh_report_history()
-            self.report_history_panel.pack(fill='both',expand=True,pady=(6,0),
-                                           before=self.report_record_status)
+            self.report_history_panel.pack(fill='both',expand=True,pady=(6,0))
             self.report_history_button.configure(text='Hide Recordings  ▴')
 
     def refresh_report_history(self):
@@ -751,9 +750,6 @@ class App(tk.Tk):
             self.report_range_canvas=None
             self.refresh_reporting()
         self.report_continue_record.configure(state='normal')
-        if event is not None and getattr(event,'type',None)==4:
-            pass
-
     def show_report_step(self,step,validate=True):
         if step not in (1,2,3):return
         sid=getattr(self,'reporting_sid',None)
