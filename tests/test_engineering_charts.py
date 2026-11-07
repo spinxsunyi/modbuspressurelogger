@@ -125,3 +125,35 @@ def test_export_charts_use_same_axis_policy(tmp_path):
         assert any(math.isclose(x,10) for x in ax.xaxis.get_majorticklocs())
         assert any(math.isclose(x,2) for x in ax.xaxis.get_minorticklocs())
     assert len(st.plot_rows(sid))==97
+
+
+def test_manual_limits_survive_grid_configuration():
+    from chart_scale import apply_window_time_grid,apply_engineering_grid,apply_pressure_grid
+    ax=Figure().add_subplot(111)
+    ax.set_xlim(3.25,33.25)
+    ax.set_ylim(200,5200)
+    apply_window_time_grid(ax,'30 min',units='minutes')
+    apply_pressure_grid(ax,200,5200)
+    apply_engineering_grid(ax)
+    assert ax.get_xlim()==pytest.approx((3.25,33.25))
+    assert ax.get_ylim()==pytest.approx((200,5200))
+
+
+def test_timestamp_formatter_across_midnight():
+    from exports import stamp
+    from datetime import datetime,timezone
+    ts=datetime(2026,11,7,15,58,20,tzinfo=timezone.utc).timestamp()
+    assert stamp(ts,8)[11:19]=='23:58:20'
+    assert stamp(ts+5*60,8)[11:19]=='00:03:20'
+    assert stamp(ts,0)[11:19]=='15:58:20'
+
+
+def test_reduction_keeps_consecutive_invalid_samples():
+    from chart_scale import reduce_live_samples
+    rows=[dict(ts=float(i),value=float(i%100),quality='OK') for i in range(12000)]
+    for i in range(4000,4040):
+        rows[i]['value']=None
+        rows[i]['quality']='TIMEOUT'
+    reduced=reduce_live_samples(rows)
+    assert [r['ts'] for r in reduced if r['quality']=='TIMEOUT']==[float(i) for i in range(4000,4040)]
+    assert len(rows)==12000
