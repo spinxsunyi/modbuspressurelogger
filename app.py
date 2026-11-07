@@ -135,7 +135,9 @@ class App(tk.Tk):
         self.bind_all('<MouseWheel>',self.scroll_page,add='+')
         self.bind_all('<Button-4>',self.scroll_page,add='+')
         self.bind_all('<Button-5>',self.scroll_page,add='+')
-        self.protocol('WM_DELETE_WINDOW',self.close); self.after(50,self.tick)
+        self.protocol('WM_DELETE_WINDOW',self.close)
+        self.bind_all('<Control-q>',lambda event:self.close(),add='+')
+        self.after(50,self.tick)
         if self.settings.get('auto_connect') and (self.settings['mode']=='Simulation' or self.settings['port']): self.after(200,self.connect)
     def show(self,name):
         if name=='About':
@@ -904,16 +906,8 @@ class App(tk.Tk):
         # Give shutdown priority over drawing charts or processing queued samples.
         # Otherwise the UI can look frozen even after the window's X is clicked.
         if self.closing:
-            if not self.engine.is_alive():
-                self.instance_lock.close()
-                self.destroy()
-                return
-            if time.monotonic()-self.close_started>10 and not self.shutdown_warning_shown:
-                self.shutdown_warning_shown=True
-                messagebox.showwarning('Closing Digital Pressure Recorder',
-                    'The device worker is still stopping. The application will close after it finishes. '
-                    'Please avoid forcing it closed during a recording.',parent=self)
-            self.after(80,self.tick)
+            # Shutdown completion is handled by _finish_close, independent from the
+            # acquisition/chart refresh timer.
             return
         try:
             while True:
@@ -950,20 +944,52 @@ class App(tk.Tk):
             self.lcanvas.draw_idle()
         self.update_enhancements()
         self.after(80,self.tick)
+    def _shutdown_trace(self,message):
+        """Local diagnostic trail when a Windows close request appears stuck."""
+        try:
+            with (DATA/'shutdown.log').open('a',encoding='utf-8') as log:
+                log.write(time.strftime('%Y-%m-%d %H:%M:%S')+'  '+message+'\n')
+        except OSError:
+            pass
+
+    def _finish_close(self):
+        """Independent shutdown poll; never relies on live-chart tick callbacks."""
+        if not self.closing:return
+        if not self.engine.is_alive():
+            self._shutdown_trace('worker stopped; destroying window')
+            try:
+                self.instance_lock.close()
+            finally:
+                self.destroy()
+            return
+        if time.monotonic()-self.close_started>8 and not self.shutdown_warning_shown:
+            self.shutdown_warning_shown=True
+            self._shutdown_trace('worker still alive after 8s; waiting for safe shutdown')
+            self.footer.config(text='Device worker still stopping — see data/shutdown.log')
+        self.after(60,self._finish_close)
+
     def close(self):
-        if self.closing:return  # Repeated X clicks must not enqueue duplicate quits.
+        if self.closing:return
+        self._shutdown_trace('close requested; recording='+str(bool(self.sid))
+                             +'; pending='+str(bool(self.pending))
+                             +'; export='+str(bool(self.exporting)))
         if self.exporting:
-            messagebox.showinfo('Export running','Please wait for the export to finish before closing.',parent=self)
+            messagebox.showinfo('Export running',
+                'Please wait for the export to finish before closing.',parent=self)
             return
         if (self.sid or self.pending) and not messagebox.askyesno(
                 'Stop and exit?','Stop recording, save and exit?',parent=self):
+            self._shutdown_trace('close cancelled by operator')
             return
         try:
             if self.save_job:
                 self.after_cancel(self.save_job)
                 self.save_job=None
-                if self.save_details() is False:return
+                if self.save_details() is False:
+                    self._shutdown_trace('close blocked: metadata save failed')
+                    return
         except Exception as exc:
+            self._shutdown_trace('close blocked: metadata error '+type(exc).__name__)
             messagebox.showerror('Cannot close safely',
                 'Recording details could not be saved. Please retry.\n'+str(exc),parent=self)
             return
@@ -971,9 +997,9 @@ class App(tk.Tk):
         self.close_started=time.monotonic()
         self.shutdown_warning_shown=False
         self.footer.config(text='Saving and closing...')
+        self._shutdown_trace('quit sent to acquisition worker')
         self.engine.send('quit')
-        # The existing periodic tick checks worker completion; do not start
-        # a second parallel tick loop while shutting down.
+        self.after(0,self._finish_close)
 
     def enhance(self):
         self.last_recording=None; self.enhanced_last=0; self.live_artists=[]
