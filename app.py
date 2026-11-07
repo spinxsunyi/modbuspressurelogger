@@ -1715,9 +1715,9 @@ class App(tk.Tk):
                    command=self.edit_annotation).pack(side='right',padx=(5,0))
         ttk.Button(actions,text='+ Add annotation',style='Compact.TButton',
                    command=self.add_annotation).pack(side='right')
-        self.events_tree=ttk.Treeview(annotations,columns=('minute','label','kind'),
+        self.events_tree=ttk.Treeview(annotations,columns=('minute','label','kind','pressure'),
                                       show='headings',height=3,selectmode='browse')
-        for col,width in [('minute',130),('label',220),('kind',110)]:
+        for col,width in [('minute',130),('label',220),('kind',110),('pressure',125)]:
             self.events_tree.heading(col,text='Time' if col=='minute' else col.title())
             self.events_tree.column(col,width=width,minwidth=70,stretch=True)
         self.events_tree.pack(fill='x')
@@ -1799,7 +1799,8 @@ class App(tk.Tk):
         for e in self.vevents:
             x=(e['ts']-start)/60; ax.axvline(x,ls='--',lw=.7,color='#bd7b1c')
             annotation=ax.annotate(e['label'] if self.history_labels.get() else '',(x,.95),xycoords=('data','axes fraction'),rotation=0,va='top',fontsize=8,bbox=dict(facecolor='#fff0b6',edgecolor='#d6ad45',pad=2),clip_on=True); annotation.draggable()
-            self.events_tree.insert('','end',iid=str(e['id']),values=(stamp(e['ts'],self.settings['utc_offset'])[11:19],e['label'],e['kind']))
+            pressure=self.annotation_pressure(self.viewer_sid,e['ts'])
+            self.events_tree.insert('','end',iid=str(e['id']),values=(stamp(e['ts'],self.settings['utc_offset'])[11:19],e['label'],e['kind'],pressure))
         self.vcanvas.draw_idle()
     def apply_view(self):
         try:v=self.view_values();self.store.update(self.viewer_sid,'view',v);self.viewer_scale_mode.set('Manual');self.paint_viewer();self.footer.config(text='Viewer configuration saved')
@@ -2209,9 +2210,9 @@ class App(tk.Tk):
         self.live_labels=tk.BooleanVar(value=True)
         self.live_slider=TimeScrollbar(self.lcanvas.get_tk_widget().master,self.slide_live)
         self.live_slider.pack(after=self.lcanvas.get_tk_widget(),fill='x')
-        self.live_events=ttk.Treeview(self.lcanvas.get_tk_widget().master,columns=('time','event'),show='headings',height=2)
-        self.live_events.heading('time',text='Time');self.live_events.heading('event',text='Event');self.live_events.pack(after=self.live_slider,fill='x')
-        self.live_events.insert('','end',iid='empty',values=('','No events yet'))
+        self.live_events=ttk.Treeview(self.lcanvas.get_tk_widget().master,columns=('time','event','pressure'),show='headings',height=2)
+        self.live_events.heading('time',text='Time');self.live_events.heading('event',text='Event');self.live_events.heading('pressure',text='Pressure');self.live_events.column('time',width=130);self.live_events.column('pressure',width=125,anchor='center');self.live_events.pack(after=self.live_slider,fill='x')
+        self.live_events.insert('','end',iid='empty',values=('','No events yet',''))
         self.events_expanded=False
         self.live_event_toggle=ttk.Button(self.lcanvas.get_tk_widget().master,
                                           text='Events (0)  ▸  Show event list',
@@ -2407,6 +2408,15 @@ class App(tk.Tk):
         if self.viewer_sid and self.page=='Viewer':
             self.update_viewer_summary()
 
+    def annotation_pressure(self,sid,ts):
+        """Display the nearest original valid sample at an annotation timestamp."""
+        if not sid:return 'N/A'
+        with self.store.connect() as db:
+            row=db.execute(
+                "SELECT value FROM samples WHERE session=? AND quality='OK' AND value IS NOT NULL "
+                "ORDER BY ABS(ts-?) LIMIT 1",(sid,ts)).fetchone()
+        return f"{from_psi(row['value'],self.settings['unit']):,.2f} {self.settings['unit']}" if row else 'N/A'
+
     def paint_live_events(self):
         for artist in self.live_artists:
             try:artist.remove()
@@ -2421,9 +2431,9 @@ class App(tk.Tk):
         if not events: wanted.add('empty')
         for key in existing-wanted:self.live_events.delete(key)
         if not events and 'empty' not in existing:
-            self.live_events.insert('','end',iid='empty',values=('','No events yet'))
+            self.live_events.insert('','end',iid='empty',values=('','No events yet',''))
         for e in events:
-            key=str(e['id']);values=(stamp(e['ts'],self.settings['utc_offset'])[11:23],e['label'])
+            key=str(e['id']);values=(stamp(e['ts'],self.settings['utc_offset'])[11:23],e['label'],self.annotation_pressure(self.last_recording,e['ts']))
             if key in existing:self.live_events.item(key,values=values)
             else:self.live_events.insert('','end',iid=key,values=values)
         self.update_live_event_toggle()
