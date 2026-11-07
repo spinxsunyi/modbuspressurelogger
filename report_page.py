@@ -272,7 +272,9 @@ def full_size_chart_figure(store, sid, unit='psi', time_range=None,
     if time_range is not None:
         ax.set_xlim((time_range[0]-start)/60,(time_range[1]-start)/60)
     ax.xaxis.set_major_locator(MaxNLocator(11))
-    ax.yaxis.set_major_locator(MaxNLocator(7))
+    # Match the portrait report's default major tick density (1000 psi at ~5000 psi full scale).
+    # Minor engineering-grid subdivisions remain one fifth of the major interval.
+    ax.yaxis.set_major_locator(MaxNLocator(6))
     engineering_grid(ax,show_grid)
     ax.tick_params(labelsize=9)
     rule(.057)
