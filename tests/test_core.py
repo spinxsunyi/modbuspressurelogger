@@ -140,8 +140,8 @@ def test_demo_seed_first_launch_only(tmp_path):
         details = json.loads(session['details'])
         assert details['job_id'].startswith('DEMO-')
         assert 'Synthetic' in details['notes']
-        assert store.stats(session['id'])['n'] == 241
-        assert len(store.events(session['id'])) == 4
+        assert store.stats(session['id'])['n'] == 2991
+        assert len(store.events(session['id'])) == 8
     original_ids = {s['id'] for s in sessions}
     seed(db)
     assert {s['id'] for s in Store(db).sessions()} == original_ids
@@ -155,3 +155,15 @@ def test_demo_seed_preserves_existing_real_database(tmp_path):
     store.finish(sid)
     seed(db)
     assert [s['id'] for s in Store(db).sessions()] == [sid]
+
+
+def test_demo_pce_pressure_profile():
+    from seed_demo import pressure_at, FILL_END, LOW_PRESSURE_END, LOW_HOLD_END, STEP_END, HIGH_HOLD_END, TEST_END
+    assert pressure_at(150) < 5
+    assert abs(pressure_at(LOW_PRESSURE_END) - 500) < 10
+    assert abs(pressure_at(LOW_HOLD_END - 1) - 497) < 10
+    assert abs(pressure_at(STEP_END) - 5000) < 10
+    assert abs(pressure_at(STEP_END + 300) - 4900) < 10
+    assert abs(pressure_at(STEP_END + 450) - 4900) < 10
+    assert pressure_at(TEST_END) < 5
+    assert HIGH_HOLD_END - STEP_END == 600
