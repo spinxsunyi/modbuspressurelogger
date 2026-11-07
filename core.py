@@ -65,6 +65,11 @@ class Store:
                 id INTEGER PRIMARY KEY, session TEXT, ts REAL, label TEXT, kind TEXT,
                 created REAL, modified REAL);
             ''')
+            # PMS-970 and the built-in simulator both produce PSI. Earlier app
+            # versions stored the selected display label in sessions.unit, while
+            # samples.value always contained unconverted PSI. Correct labels only;
+            # never rewrite pressure readings.
+            c.execute("UPDATE sessions SET unit='psi' WHERE unit IS NULL OR unit!='psi'")
     @contextmanager
     def connect(self):
         c = sqlite3.connect(self.path, timeout=5)
