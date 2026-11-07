@@ -149,11 +149,46 @@ class App(tk.Tk):
         if name=='History': self.refresh_history()
         if name=='Reporting': self.refresh_reporting()
     def plot(self,parent):
-        fig=Figure(figsize=(4,2),dpi=100,facecolor='white'); ax=fig.add_subplot(111); fig.subplots_adjust(left=.09,right=.98,bottom=.23,top=.92)
+        fig=Figure(figsize=(4,2),dpi=100,facecolor='white'); ax=fig.add_subplot(111); fig.subplots_adjust(left=.10,right=.98,bottom=.17,top=.91)
         canvas=FigureCanvasTkAgg(fig,master=parent); canvas.get_tk_widget().pack(fill='both',expand=True)
         return fig,ax,canvas
+    def chart_scroll(self,event,live):
+        """Zoom time around the cursor; never modify the recorded samples."""
+        ax=self.lax if live else self.vax
+        if event.inaxes!=ax or event.xdata is None:return
+        direction=getattr(event,'button',None)
+        if direction not in ('up','down'):return
+        lo,hi=ax.get_xlim()
+        factor=.8 if direction=='up' else 1.25
+        width=max((hi-lo)*factor,.02 if not live else .5)
+        ratio=max(0,min(1,(event.xdata-lo)/(hi-lo))) if hi>lo else .5
+        new_lo=event.xdata-ratio*width
+        ax.set_xlim(new_lo,new_lo+width)
+        if live:
+            self.follow.set(False)
+            self.lcanvas.draw_idle()
+        else:
+            self.history_window.set('Buffer data')
+            self.view_vars['xmin'].set(str(new_lo))
+            self.view_vars['xmax'].set(str(new_lo+width))
+            self.vcanvas.draw_idle()
+
+    def chart_double_click(self,event,live):
+        if event.inaxes is None or not getattr(event,'dblclick',False):return
+        if live:
+            self.follow.set(True)
+            self.live_auto.set(True)
+            self.scale_mode.set('Auto')
+        else:
+            self.history_window.set('Buffer data')
+            self.viewer_scale_mode.set('Auto')
+            self.auto_history_scale()
+            self.slide_history(0)
+
     def chart_tools(self,canvas,parent,live):
         tools=NavigationToolbar2Tk(canvas,parent,pack_toolbar=False)
+        canvas.mpl_connect('scroll_event',lambda event:self.chart_scroll(event,live))
+        canvas.mpl_connect('button_press_event',lambda event:self.chart_double_click(event,live))
         if live:
             bar=self.live_toolbar
             self.live_chart_tools=bar
@@ -743,16 +778,18 @@ class App(tk.Tk):
             if self.viewer_time_display.get()=='Elapsed time':
                 seconds=int(round(x*60))
                 return f'{seconds//60:02}:{seconds%60:02}'
-            return stamp(start+x*60,self.settings['utc_offset'])[5:19].replace('T',' ')
+            return stamp(start+x*60,self.settings['utc_offset'])[11:19]
         ax.xaxis.set_major_formatter(FuncFormatter(time_label))
-        ax.tick_params(axis='x',labelrotation=15 if self.viewer_time_display.get()=='Date & time' else 0)
-        for label in ax.get_xticklabels():
-            label.set_horizontalalignment('right' if self.viewer_time_display.get()=='Date & time' else 'center')
+        ax.tick_params(axis='x',labelrotation=0)
         ax.set(xlabel='Elapsed time (mm:ss)' if self.viewer_time_display.get()=='Elapsed time' else 'Date & time',
                ylabel='Pressure ('+self.settings['unit']+')',
                xlim=(v['xmin'],v['xmax']),ylim=(v['ymin'],v['ymax']))
         ax.yaxis.set_major_formatter(FuncFormatter(lambda p,pos:f'{from_psi(p,self.settings["unit"]):,.1f}'))
         ax.grid(alpha=.2)
+        if self.viewer_time_display.get()=='Date & time':
+            from datetime import datetime,timezone,timedelta
+            date=datetime.fromtimestamp(start+v['xmin']*60,timezone(timedelta(hours=self.settings['utc_offset']))).strftime('%d %b %Y')
+            ax.set_xlabel(date+'  |  UTC'+f'{self.settings["utc_offset"]:+g}')
         for i in self.events_tree.get_children():self.events_tree.delete(i)
         for e in self.vevents:
             x=(e['ts']-start)/60; ax.axvline(x,ls='--',lw=.7,color='#bd7b1c')
@@ -971,8 +1008,10 @@ class App(tk.Tk):
             self.lax.xaxis.set_major_locator(MaxNLocator(nbins=5, min_n_ticks=2))
             self.line.set_data([r['ts'] for r in rows],[r['value'] if r['quality']=='OK' else math.nan for r in rows]);self.lax.set_ylabel('Pressure ('+self.settings['unit']+')');self.lax.yaxis.set_major_formatter(FuncFormatter(lambda p,pos:f'{from_psi(p,self.settings["unit"]):,.1f}'))
             self.lax.xaxis.set_major_formatter(FuncFormatter(lambda x,pos:stamp(x,self.settings['utc_offset'])[11:19]))
-            self.lax.tick_params(axis='x',labelrotation=15)
-            for label in self.lax.get_xticklabels():label.set_horizontalalignment('right')
+            self.lax.tick_params(axis='x',labelrotation=0)
+            from datetime import datetime,timezone,timedelta
+            date=datetime.fromtimestamp(end,timezone(timedelta(hours=self.settings['utc_offset']))).strftime('%d %b %Y')
+            self.lax.set_xlabel(date+'  |  UTC'+f'{self.settings["utc_offset"]:+g}')
             if self.follow.get():
                 self.lax.set_autoscaley_on(self.live_auto.get());self.lax.relim();self.lax.autoscale_view(scaley=self.live_auto.get());self.lax.set_xlim(max(rows[0]['ts'],end-seconds),max(end,rows[0]['ts']+1))
             self.lcanvas.draw_idle()
@@ -1219,11 +1258,12 @@ class App(tk.Tk):
             row=min(rows,key=lambda r:abs(r['ts']-target));x=xpos(row['ts']);y=row['value']
             if row['quality']!='OK' or y is None:canvas.draw_idle();return
             unit=self.settings['unit']
-            text=f"Time: {stamp(row['ts'],self.settings['utc_offset'])[11:23]}\nPressure: {from_psi(y,unit):,.2f} {unit}"
+            text=f"Time: {stamp(row['ts'],self.settings['utc_offset'])[11:23]}\nPressure: {from_psi(y,unit):,.2f} {unit}\nQuality: {row['quality']}"
         if not near:
             marker,=ax.plot([x],[y],'o',color='#008b86',ms=5)
             guide=ax.axvline(x,color='#66798a',ls='--',lw=.7)
-            self.hover_artists[attr]=(marker,guide)
+            horizontal=ax.axhline(y,color='#66798a',ls=':',lw=.6,alpha=.65)
+            self.hover_artists[attr]=(marker,guide,horizontal)
         tip=ax.annotate(text,(x,y),xytext=(-12 if event.x>ax.bbox.xmax-160 else 12,-16 if event.y>ax.bbox.ymax-60 else 16),ha='right' if event.x>ax.bbox.xmax-160 else 'left',va='top' if event.y>ax.bbox.ymax-60 else 'bottom',textcoords='offset points',bbox=dict(boxstyle='round',fc='white',ec='#17334c'),fontsize=9)
         setattr(self,attr,tip);canvas.draw_idle()
 
