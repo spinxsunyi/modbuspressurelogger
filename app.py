@@ -893,50 +893,32 @@ class App(tk.Tk):
         self.reporting_figure=None
         try:
             fmt=self.report_format.get()
-            self.report_preview_info.set('PDF report preview' if fmt=='pdf' else 'JPEG graph preview' if fmt=='jpg' else 'Detailed recorded data will be exported; graph preview is not applicable.')
-            if fmt in ('xlsx','csv'):
+            self.report_preview_info.set('PDF report preview' if fmt=='pdf' else
+                'JPEG graph — export directly' if fmt=='jpg' else
+                'Detailed recorded data — export directly')
+            if fmt!='pdf':
                 ttk.Label(self.reporting_preview,text='Preview not available',
                           font=(UI_FONT,15,'bold'),foreground=INK).pack(padx=24,pady=(48,10))
-                ttk.Label(self.reporting_preview,
-                          text='Excel and CSV exports contain detailed data points within the selected interval.',
+                description=('Export the JPEG to view the graph.' if fmt=='jpg' else
+                             'Excel and CSV exports contain detailed data points within the selected interval.')
+                ttk.Label(self.reporting_preview,text=description,
                           foreground='#576677').pack(padx=24,pady=(0,48))
                 return
-            fig=report_figure(self.store,sid,self.report_unit.get(),time_range,self.report_axis.get(),self.report_events.get(),self.report_grid.get(),y_limits) if fmt=='pdf' else graph_figure(self.store,sid,self.report_unit.get(),time_range,self.report_axis.get(),self.report_events.get(),self.report_grid.get(),y_limits)
+            fig=report_figure(self.store,sid,self.report_unit.get(),time_range,
+                              self.report_axis.get(),self.report_events.get(),
+                              self.report_grid.get(),y_limits)
             canvas=FigureCanvasTkAgg(fig,master=self.reporting_preview)
             widget=canvas.get_tk_widget()
             widget.pack(padx=12,pady=12)
             self.reporting_figure=fig
             self.reporting_figure_canvas=canvas
-            if fmt=='jpg':
-                self.resize_reporting_preview_viewport()
             canvas.draw()
         except Exception as exc:
             ttk.Label(self.reporting_preview,text='Preview unavailable: '+str(exc)).pack(pady=30)
 
     def resize_reporting_preview_viewport(self,event=None):
-        viewport=self.reporting_canvas
-        width=max(1,viewport.winfo_width())
-        height=max(1,viewport.winfo_height())
-        viewport.coords(self.reporting_window,width/2,0)
-        if self.report_format.get()!='jpg':
-            return
-        canvas=getattr(self,'reporting_figure_canvas',None)
-        if canvas is None or not canvas.get_tk_widget().winfo_exists():
-            return
-        # Preserve the original 2:1 graph aspect ratio and fit BOTH dimensions.
-        # Stretching the FigureCanvasTkAgg widget independently from its figure
-        # clips the title and axis labels (especially at 150% display scaling).
-        available_w=max(1,width-48)
-        available_h=max(1,height-48)
-        scale=min(available_w/12.0,available_h/6.0)
-        target_w=max(1,int(12*scale))
-        target_h=max(1,int(6*scale))
-        fig=canvas.figure
-        dpi=fig.get_dpi()
-        if abs(fig.get_figwidth()*dpi-target_w)>2 or abs(fig.get_figheight()*dpi-target_h)>2:
-            fig.set_size_inches(target_w/dpi,target_h/dpi,forward=True)
-            canvas.get_tk_widget().configure(width=target_w,height=target_h)
-            canvas.draw_idle()
+        width=max(1,self.reporting_canvas.winfo_width())
+        self.reporting_canvas.coords(self.reporting_window,width/2,0)
 
     def draw_report_pan_icon(self):
         c=self.report_pan_button;c.delete('all')
