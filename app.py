@@ -22,53 +22,44 @@ PALE_TEAL = '#e5f5f3'
 BASE=Path(sys.executable).parent if getattr(sys,'frozen',False) else Path(__file__).parent
 DATA=Path(os.environ.get('PMS_LOGGER_DATA',str(BASE/'data')))
 
-class Timeline(tk.Canvas):
-    """Draw the available pressure trace and drag the visible time interval."""
-    def __init__(self, parent, move):
-        super().__init__(parent, height=48, background='white', highlightthickness=1,
-                         highlightbackground='#c5d0dc')
-        self.move = move
-        self.percent = 100
-        self.fraction = 1
-        self.bind('<Button-1>', self.drag)
-        self.bind('<B1-Motion>', self.drag)
+class TimeScrollbar(ttk.Scrollbar):
+    """Standard horizontal time scrollbar; compatible with timeline navigation."""
+    def __init__(self,parent,move):
+        super().__init__(parent,orient='horizontal',command=self.on_scroll)
+        self.move=move
+        self.percent=100.0
+        self.fraction=1.0
 
-    def drag(self, event):
-        width = max(1, self.winfo_width() - 16)
-        span = 1 - self.fraction
-        if span > 0:
-            self.percent = 100 * max(0, min(1, ((event.x - 8) / width - self.fraction / 2) / span))
-            self.move(self.percent)
+    def on_scroll(self,*args):
+        span=max(0.0,1.0-self.fraction)
+        start=self.percent/100.0*span
+        if args[0]=='moveto':
+            start=float(args[1])
+        elif args[0]=='scroll':
+            increment=(self.fraction*.15 if self.fraction<1 else .05)
+            start+=int(args[1])*increment*({'pages':5,'units':1}.get(args[2],1))
+        start=max(0.0,min(span,start))
+        self.percent=100*start/span if span>0 else 100.0
+        self.move(self.percent)
 
     def get(self):
         return self.percent
 
-    def show_range(self, rows, left, right, offset):
-        self.delete('all')
+    def show_range(self,rows,left,right,offset):
         if not rows:
+            self.fraction=1.0
+            self.percent=100.0
+            super().set(0,1)
             return
-        first, last = rows[0]['ts'], rows[-1]['ts']
-        duration = max(last - first, .001)
-        width = max(1, self.winfo_width() - 16)
-        def x(t):
-            return 8 + width * max(0, min(1, (t-first)/duration))
-        left, right = max(first, left), min(last, right)
-        self.fraction = max(0, min(1, (right-left)/duration))
-        self.percent = 100*(left-first)/max(.001, duration-(right-left))
-        self.create_rectangle(x(left), 2, x(right), 29, fill='#c6ebe6', outline='#008b86')
-        values = [r['value'] for r in rows if r['quality']=='OK' and r['value'] is not None]
-        if values:
-            lo, hi = min(values), max(values)
-            points = []
-            for r in rows[::max(1,len(rows)//500)]:
-                if r['quality']=='OK' and r['value'] is not None:
-                    points.extend((x(r['ts']), 25-19*(r['value']-lo)/max(.001,hi-lo)))
-                else:
-                    if len(points)>=4: self.create_line(*points, fill='#008b86')
-                    points=[]
-            if len(points)>=4: self.create_line(*points, fill='#008b86')
-        label = 'Timeline    '+stamp(left,offset)[11:19]+' – '+stamp(right,offset)[11:19]
-        self.create_text(8,39,text=label,anchor='w',fill='#17334c')
+        first,last=rows[0]['ts'],rows[-1]['ts']
+        duration=max(last-first,.001)
+        start=max(0.0,min(1.0,(left-first)/duration))
+        end=max(start,min(1.0,(right-first)/duration))
+        self.fraction=max(0.0,min(1.0,end-start))
+        span=max(0.0,1.0-self.fraction)
+        self.percent=100*min(span,start)/span if span>0 else 100.0
+        super().set(start,end)
+
 
 class App(tk.Tk):
     def __init__(self):
@@ -134,9 +125,12 @@ class App(tk.Tk):
         return fig,ax,canvas
     def chart_tools(self,canvas,parent,live):
         tools=NavigationToolbar2Tk(canvas,parent,pack_toolbar=False)
-        bar=ttk.Frame(parent)
-        bar.pack(side='bottom',fill='x')
-        if live:self.live_chart_tools=bar
+        if live:
+            bar=self.live_toolbar
+            self.live_chart_tools=bar
+        else:
+            bar=ttk.Frame(parent)
+            bar.pack(side='bottom',fill='x')
         def zoom(factor):
             ax=canvas.figure.axes[0]
             lo,hi=ax.get_xlim()
@@ -154,8 +148,9 @@ class App(tk.Tk):
                 self.history_window.set('All time')
                 self.auto_history_scale()
                 self.slide_history(0)
-        for label,cmd in [('Reset view',reset),('Zoom −',lambda:zoom(1.5)),('Zoom +',lambda:zoom(2/3)),('Pan',tools.pan)]:
-            ttk.Button(bar,text=label,command=cmd).pack(side='right',padx=2)
+        labels=[('Reset',reset),('−',lambda:zoom(1.5)),('+',lambda:zoom(2/3)),('Pan',tools.pan)] if live else [('Reset view',reset),('Zoom −',lambda:zoom(1.5)),('Zoom +',lambda:zoom(2/3)),('Pan',tools.pan)]
+        for label,cmd in labels:
+            ttk.Button(bar,text=label,command=cmd,width=6 if live else None).pack(side='right',padx=2)
 
     def auto_history_scale(self):
         valid=[r['value'] for r in self.vrows if r['quality']=='OK' and r['value'] is not None]
@@ -197,12 +192,16 @@ class App(tk.Tk):
                            font=(UI_FONT,20,'bold'),anchor='w')
             label.pack(fill='x',padx=12,pady=(3,10))
             self.metric.append(label)
-        toolbar=ttk.Frame(main); toolbar.pack(fill='x',pady=(2,3))
-        self.follow=tk.BooleanVar(value=True); ttk.Checkbutton(toolbar,text='Auto-follow',variable=self.follow).pack(side='left')
-        ttk.Label(toolbar,text='Time window').pack(side='left',padx=4)
-        self.window=tk.StringVar(value='5 min'); ttk.Combobox(toolbar,textvariable=self.window,values=['1 min','5 min','10 min','15 min','30 min','1 hour','All time'],state='readonly',width=10).pack(side='left',padx=8)
-        ttk.Button(toolbar,text='Go to Live',command=lambda:self.follow.set(True)).pack(side='left')
-        ttk.Button(toolbar,text='Details +/-',command=self.toggle_details).pack(side='right')
+        self.live_toolbar=ttk.Frame(main); toolbar=self.live_toolbar
+        toolbar.pack(fill='x',pady=(2,4))
+        self.follow=tk.BooleanVar(value=True)
+        ttk.Checkbutton(toolbar,text='Follow',variable=self.follow).pack(side='left')
+        ttk.Label(toolbar,text='Window').pack(side='left',padx=(9,3))
+        self.window=tk.StringVar(value='5 min')
+        ttk.Combobox(toolbar,textvariable=self.window,values=['1 min','5 min','10 min','15 min','30 min','1 hour','All time'],state='readonly',width=9).pack(side='left',padx=(0,5))
+        ttk.Button(toolbar,text='Live',command=lambda:self.follow.set(True),width=6).pack(side='left')
+        ttk.Button(toolbar,text='Scale / labels',command=self.show_live_options).pack(side='left',padx=(6,0))
+        ttk.Button(top,text='Details +/−',command=self.toggle_details).pack(side='right',padx=10)
         self.lfig,self.lax,self.lcanvas=self.plot(main); self.lax.set(xlabel='Time',ylabel='Pressure'); self.lax.grid(alpha=.2)
         self.line,=self.lax.plot([],[],color='#008b92',lw=1.2)
         self.lcanvas.mpl_connect('button_press_event',lambda e:self.follow.set(False) if e.inaxes else None)
@@ -546,19 +545,9 @@ class App(tk.Tk):
         self.status_live.pack(side='right',padx=12)
         self.status_rec=tk.Label(self.global_status.master,text='REC OFF',foreground='#777777'); self.status_rec.pack(side='right',padx=12)
         self.bind('<Configure>', self.adapt_width, add='+')
-        # Keep scaling and navigation together above the chart, on separate rows
-        # so controls do not clip at the supported 820px minimum window width.
-        self.live_chart_tools.pack_forget()
-        self.live_chart_tools.pack(before=self.lcanvas.get_tk_widget(),fill='x',pady=(0,3))
-        bar=ttk.Frame(self.lcanvas.get_tk_widget().master)
-        bar.pack(before=self.live_chart_tools,fill='x',pady=(2,2))
         self.live_min=tk.StringVar(value='0');self.live_max=tk.StringVar(value='3000');self.live_auto=tk.BooleanVar(value=True)
-        for label,var in [('Pressure min',self.live_min),('Pressure max',self.live_max)]:
-            ttk.Label(bar,text=label).pack(side='left');ttk.Entry(bar,textvariable=var,width=9).pack(side='left',padx=5)
-        ttk.Button(bar,text='Apply',command=self.apply_live_scale).pack(side='left')
-        ttk.Checkbutton(bar,text='Auto scale',variable=self.live_auto,command=lambda:self.lax.set_autoscaley_on(self.live_auto.get())).pack(side='left')
-        self.live_labels=tk.BooleanVar(value=True);ttk.Checkbutton(bar,text='Show event labels',variable=self.live_labels,command=self.paint_live_events).pack(side='left')
-        self.live_slider=Timeline(self.lcanvas.get_tk_widget().master,self.slide_live)
+        self.live_labels=tk.BooleanVar(value=True)
+        self.live_slider=TimeScrollbar(self.lcanvas.get_tk_widget().master,self.slide_live)
         self.live_slider.pack(after=self.lcanvas.get_tk_widget(),fill='x')
         self.live_events=ttk.Treeview(self.lcanvas.get_tk_widget().master,columns=('time','event'),show='headings',height=2)
         self.live_events.heading('time',text='Time');self.live_events.heading('event',text='Event');self.live_events.pack(after=self.live_slider,fill='x')
@@ -596,7 +585,7 @@ class App(tk.Tk):
         ttk.Button(bar,text='Apply',command=self.apply_view).pack(side='left')
         self.history_labels=tk.BooleanVar(value=True)
         ttk.Checkbutton(bar,text='Show event labels',variable=self.history_labels,command=self.paint_viewer).pack(side='left')
-        self.history_slider=Timeline(self.vcanvas.get_tk_widget().master,self.slide_history)
+        self.history_slider=TimeScrollbar(self.vcanvas.get_tk_widget().master,self.slide_history)
         self.history_slider.pack(after=self.vcanvas.get_tk_widget(),fill='x')
         self.events_tree.bind('<<TreeviewSelect>>',self.select_history_event)
         self.lcanvas.mpl_connect('motion_notify_event',lambda e:self.hover(e,False))
@@ -658,6 +647,26 @@ class App(tk.Tk):
             self.settings_columns.columnconfigure(1,weight=2)
             self.settings_about.grid(row=0,column=1,rowspan=2,
                                      sticky='nsew',padx=(8,0))
+
+    def show_live_options(self):
+        if getattr(self,'live_options',None) and self.live_options.winfo_exists():
+            self.live_options.lift()
+            return
+        win=tk.Toplevel(self)
+        win.title('Chart options')
+        win.transient(self)
+        win.resizable(False,False)
+        self.live_options=win
+        body=ttk.Frame(win,padding=16);body.pack(fill='both',expand=True)
+        for i,(name,var) in enumerate((('Pressure min',self.live_min),('Pressure max',self.live_max))):
+            ttk.Label(body,text=name).grid(row=i,column=0,sticky='w',pady=4,padx=(0,12))
+            ttk.Entry(body,textvariable=var,width=13).grid(row=i,column=1,sticky='ew',pady=4)
+        ttk.Checkbutton(body,text='Auto pressure scale',variable=self.live_auto,
+                        command=lambda:self.lax.set_autoscaley_on(self.live_auto.get())).grid(row=2,column=0,columnspan=2,sticky='w',pady=6)
+        ttk.Checkbutton(body,text='Show event labels',variable=self.live_labels,
+                        command=self.paint_live_events).grid(row=3,column=0,columnspan=2,sticky='w',pady=6)
+        ttk.Button(body,text='Apply scale',command=self.apply_live_scale).grid(row=4,column=0,sticky='ew',pady=(8,0))
+        ttk.Button(body,text='Close',command=win.destroy).grid(row=4,column=1,sticky='ew',pady=(8,0))
 
     def apply_live_scale(self):
         try:
