@@ -70,9 +70,14 @@ def nice_pressure_step(span, target=6):
     power=10**math.floor(math.log10(raw))
     return min((1,2,2.5,5,10),key=lambda v:abs(v*power-raw))*power
 
-def apply_pressure_grid(ax, low, high):
-    """Configure major pressure ticks without changing the operator's Y limits."""
-    step=nice_pressure_step(high-low)
+def apply_pressure_grid(ax, low, high, unit='psi', raw_psi=False):
+    """Engineering ticks in displayed units; optional PSI-backed Y coordinates."""
+    if raw_psi:
+        from units import from_psi,to_psi
+        display_span=from_psi(high-low,unit)
+        step=to_psi(nice_pressure_step(display_span),unit)
+    else:
+        step=nice_pressure_step(high-low)
     ax.yaxis.set_major_locator(MultipleLocator(step))
     ax.yaxis.set_minor_locator(MultipleLocator(step/5))
     return step
