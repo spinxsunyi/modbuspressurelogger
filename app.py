@@ -618,6 +618,9 @@ class App(tk.Tk):
         self.port_count=ttk.Label(port_actions)
         self.port_count.pack(side='left',padx=(8,0))
         ttk.Label(grid,text='Recommended: 9600 baud',foreground='#576677').grid(row=2,column=2,sticky='w',padx=10)
+        ttk.Label(display,text='Recommended: 0.5 s',foreground='#576677').grid(row=0,column=2,sticky='w',padx=10)
+        ttk.Label(display,text='0.5 s means one reading is requested every half-second. Actual sampling may be slower if communication is delayed.',foreground='#576677',wraplength=350,justify='left').grid(row=1,column=2,rowspan=2,sticky='nw',padx=10,pady=(4,0))
+
         self.auto=tk.BooleanVar(value=self.settings['auto_connect'])
         ttk.Checkbutton(actions,text='Auto-connect last configuration at startup',variable=self.auto).pack(anchor='w',pady=(4,16))
         ttk.Label(actions,text='Hardware profile: PMS-970  |  FC03  |  address 0x0001  |  readout + status',wraplength=360).pack(anchor='w',pady=(0,8))
