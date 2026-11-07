@@ -82,6 +82,9 @@ try:
     a.show('History');pump(.3);assert a.sid==sid
     assert a.history_open.cget('state')=='disabled'
     assert len(a.history.get_children())>=1
+    assert 'engineer' in a.history['columns']
+    assert len(a.history.item(sid,'values'))==7
+    assert a.history.item(sid,'values')[3]=='—'
     assert 'recording' in a.history_count.cget('text')
     a.history.selection_set(sid)
     a.update_history_selection()
