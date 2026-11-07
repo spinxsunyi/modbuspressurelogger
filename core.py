@@ -103,6 +103,24 @@ class Store:
                 (sid,ts,label,kind,time.time(),time.time())).lastrowid
     def edit_event(self,eid,ts,label):
         with self.connect() as c: c.execute('UPDATE events SET ts=?,label=?,modified=? WHERE id=?',(ts,label,time.time(),eid))
+    def delete_event(self,eid,sid):
+        """Delete one annotation belonging to the selected recording."""
+        with self.connect() as c:
+            result=c.execute('DELETE FROM events WHERE id=? AND session=?',(eid,sid))
+            return result.rowcount==1
+
+    def delete_session(self,sid):
+        """Atomically delete a completed session and its associated samples/events."""
+        with self.connect() as c:
+            row=c.execute('SELECT state FROM sessions WHERE id=?',(sid,)).fetchone()
+            if row is None:return False
+            if row['state']=='Recording':
+                raise ValueError('Cannot delete a recording while acquisition is active.')
+            c.execute('DELETE FROM samples WHERE session=?',(sid,))
+            c.execute('DELETE FROM events WHERE session=?',(sid,))
+            c.execute('DELETE FROM sessions WHERE id=?',(sid,))
+            return True
+
     def events(self,sid):
         with self.connect() as c: return [dict(r) for r in c.execute('SELECT * FROM events WHERE session=? ORDER BY ts',(sid,))]
     def stats(self,sid):
