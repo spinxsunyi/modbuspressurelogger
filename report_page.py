@@ -48,7 +48,7 @@ def report_figure(store, sid, unit='psi', time_range=None, time_axis='Elapsed Ti
             txt(x+.13,.875-i*.024,str(value or '—')[:37],8)
     rule(.741)
     txt(.06,.726,'PRESSURE TREND',10,True)
-    ax=fig.add_axes([.105,.385,.83,.31])
+    ax=fig.add_axes([.105,.425,.83,.265])
     start=session['started']
     xx=[(r['ts']-start)/60 for r in rows]
     yy=[from_psi(r['value'],unit) if r['quality']=='OK' and r['value'] is not None else math.nan for r in rows]
@@ -63,10 +63,10 @@ def report_figure(store, sid, unit='psi', time_range=None, time_axis='Elapsed Ti
     ax.xaxis.set_major_locator(MaxNLocator(6))
     ax.grid(alpha=.22)
     ax.tick_params(labelsize=8)
-    txt(.06,.366,'MIN  '+fmt(ext[0]),8,True)
-    txt(.31,.366,'MAX  '+fmt(ext[1]),8,True)
-    txt(.56,.366,'FIRST  '+fmt(first['value'] if first else None),8,True)
-    txt(.79,.366,'LAST  '+fmt(last['value'] if last else None),8,True)
+    txt(.06,.383,'MIN  '+fmt(ext[0]),8,True)
+    txt(.31,.383,'MAX  '+fmt(ext[1]),8,True)
+    txt(.56,.383,'FIRST  '+fmt(first['value'] if first else None),8,True)
+    txt(.79,.383,'LAST  '+fmt(last['value'] if last else None),8,True)
     rule(.346)
     txt(.06,.333,'EVENT LIST',10,True)
     if not events: txt(.06,.309,'No event annotations',8,color=gray)
