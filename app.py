@@ -864,6 +864,7 @@ class App(tk.Tk):
         xs=[(r['ts']-self.report_graph_start)/60 for r in self.report_graph_rows]
         self.report_graph_line.set_data(xs,values)
         ax.set_ylabel(f'Pressure ({unit})')
+        self.report_y_label.configure(text=f'Y min / max ({unit})')
         for artist in self.report_graph_event_artists:artist.remove()
         self.report_graph_event_artists=[]
         if self.report_events.get():
@@ -873,7 +874,7 @@ class App(tk.Tk):
         if self.report_axis.get()=='Date & Time':
             self.report_xfrom_label.configure(text='View X from (date/time)')
             ax.xaxis.set_major_formatter(FuncFormatter(
-                lambda x,pos:__import__('datetime').datetime.fromisoformat(stamp(self.report_graph_start+x*60,self.report_graph_offset)).strftime('%d %b\\n%H:%M:%S')))
+                lambda x,pos:__import__('datetime').datetime.fromisoformat(stamp(self.report_graph_start+x*60,self.report_graph_offset)).strftime('%d %b\n%H:%M:%S')))
             ax.set_xlabel('Date & time (UTC%+g)' % float(self.report_graph_offset))
         else:
             self.report_xfrom_label.configure(text='View X from (min)')
