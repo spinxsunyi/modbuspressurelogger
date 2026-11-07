@@ -767,7 +767,7 @@ class App(tk.Tk):
         self.reporting_preview=ttk.Frame(self.reporting_canvas)
         self.reporting_window=self.reporting_canvas.create_window((0,0),window=self.reporting_preview,anchor='n')
         self.reporting_preview.bind('<Configure>',lambda e:self.reporting_canvas.configure(scrollregion=self.reporting_canvas.bbox('all')))
-        self.reporting_canvas.bind('<Configure>',lambda e:self.reporting_canvas.coords(self.reporting_window,e.width/2,0))
+        self.reporting_canvas.bind('<Configure>',self.resize_reporting_preview_viewport)
         self.reporting_placeholder=ttk.Label(self.reporting_preview,text='Select a recording to preview its report.')
         self.reporting_placeholder.pack(pady=40)
         self.reporting_preview_sid=None
@@ -899,11 +899,35 @@ class App(tk.Tk):
             canvas=FigureCanvasTkAgg(fig,master=self.reporting_preview)
             widget=canvas.get_tk_widget()
             widget.pack(padx=12,pady=12)
-            canvas.draw()
             self.reporting_figure=fig
             self.reporting_figure_canvas=canvas
+            if fmt=='jpg':
+                self.resize_reporting_preview_viewport()
+            canvas.draw()
         except Exception as exc:
             ttk.Label(self.reporting_preview,text='Preview unavailable: '+str(exc)).pack(pady=30)
+
+    def resize_reporting_preview_viewport(self,event=None):
+        viewport=self.reporting_canvas
+        width=max(1,viewport.winfo_width())
+        height=max(1,viewport.winfo_height())
+        viewport.coords(self.reporting_window,width/2,0)
+        if getattr(self,'report_format',None) and self.report_format.get()=='jpg':
+            # JPEG graph preview fits the available viewport in both directions.
+            # Do not resize the export figure: this is a display-only adjustment.
+            viewport.itemconfigure(self.reporting_window,width=max(1,width-24),
+                                   height=max(1,height-24))
+            canvas=getattr(self,'reporting_figure_canvas',None)
+            if canvas is not None and canvas.get_tk_widget().winfo_exists():
+                fig=canvas.figure
+                dpi=fig.get_dpi()
+                fig.set_size_inches(max(1,(width-48)/dpi),
+                                    max(1,(height-48)/dpi),forward=False)
+                canvas.get_tk_widget().configure(width=max(1,width-48),
+                                                 height=max(1,height-48))
+                canvas.draw_idle()
+        else:
+            viewport.itemconfigure(self.reporting_window,width=0,height=0)
 
     def draw_report_pan_icon(self):
         c=self.report_pan_button;c.delete('all')
