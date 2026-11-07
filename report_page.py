@@ -118,6 +118,6 @@ def configure_time_axis(ax,start,offset,mode):
     if mode=='Date & Time':
         ax.set_xlabel('Date & time (UTC%+g)' % float(offset))
         ax.xaxis.set_major_formatter(FuncFormatter(
-            lambda x,pos:stamp(start+x*60,offset).replace('T',' ')[11:19]))
+            lambda x,pos:datetime.fromisoformat(stamp(start+x*60,offset)).strftime('%d %b\\n%H:%M:%S')))
     else:
         ax.set_xlabel('Elapsed time (minutes)')
