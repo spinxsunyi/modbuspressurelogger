@@ -29,6 +29,15 @@ try:
     a.live_min.set('0');a.live_max.set('3000');a.apply_live_scale();assert a.lax.get_ylim()==(0,3000)
     a.slide_live(0);assert not a.follow.get();a.follow.set(True)
     a.paint_live_events();assert len(a.live_events.get_children())==1
+    # Chart-focused layout: event list starts hidden and can be expanded on demand.
+    assert not a.events_expanded
+    assert not a.live_events.winfo_manager()
+    assert a.live_chart_tools.winfo_manager()=='pack'
+    a.toggle_live_events();pump(.1)
+    assert a.events_expanded and a.live_events.winfo_manager()=='pack'
+    assert 'Events (1)' in a.live_event_toggle.cget('text')
+    a.toggle_live_events();pump(.1)
+    assert not a.events_expanded and not a.live_events.winfo_manager()
     a.toggle_details();a.toggle_details();pump(.2)
     # Compact-window layout must remain operational and restore the metadata panel.
     a.geometry('850x600');pump(.3)
