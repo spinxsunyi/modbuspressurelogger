@@ -21,9 +21,17 @@ def engineering_time_scale(lo, hi):
     duration = hi-lo
     quantum = 5 if duration <= 60 else 10 if duration <= 180 else 30 if duration <= 720 else 60
     width = max(quantum, math.ceil((duration-1e-9)/quantum)*quantum)
-    raw = width/6
-    steps = (1,2,5,10,15,20,30,60,120,180,240,360,720,1440)
-    major = min(steps, key=lambda step:(abs(step-raw),step))
+    # Prefer a readable 4-10 major divisions instead of nearest raw step.
+    # Examples: 18->20/5, 48->50/10, 73->80/10, 118->120/20.
+    if width <= 5: major=1
+    elif width <= 10: major=2
+    elif width <= 30: major=5
+    elif width <= 100: major=10
+    elif width <= 180: major=20
+    else:
+        raw=width/6
+        steps=(30,60,120,180,240,360,720,1440)
+        major=min(steps,key=lambda step:(abs(step-raw),step))
     return lo,lo+width,major,major/5
 
 def apply_report_time_scale(ax, lo, hi):
