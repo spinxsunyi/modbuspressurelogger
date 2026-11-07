@@ -83,6 +83,33 @@ class TimeScrollbar(ttk.Scrollbar):
         super().set(start,end)
 
 
+def reduce_live_samples(rows, max_points=4000):
+    """Render bounded min/max envelopes while retaining raw samples in the buffer.
+
+    Every bucket keeps its first/last sample, pressure extrema, and any non-OK
+    quality transition. This preserves short spikes and visible communication
+    gaps much better than taking every Nth reading.
+    """
+    if len(rows) <= max_points:
+        return rows
+    bucket_size=max(1,math.ceil(len(rows)/(max_points//4)))
+    reduced=[]
+    for start in range(0,len(rows),bucket_size):
+        bucket=rows[start:start+bucket_size]
+        picks={0,len(bucket)-1}
+        valid=[(i,r['value']) for i,r in enumerate(bucket) if r['quality']=='OK']
+        if valid:
+            picks.add(min(valid,key=lambda p:p[1])[0])
+            picks.add(max(valid,key=lambda p:p[1])[0])
+        for i,r in enumerate(bucket):
+            if r['quality']!='OK':
+                picks.add(i)
+                if i:picks.add(i-1)
+                if i+1<len(bucket):picks.add(i+1)
+        reduced.extend(bucket[i] for i in sorted(picks))
+    return reduced
+
+
 def apply_engineering_grid(ax, visible=True):
     """Barton-style major/minor grid, adaptive to the current axis scale."""
     from matplotlib.ticker import AutoMinorLocator
@@ -103,7 +130,7 @@ class App(tk.Tk):
         except (OSError,ValueError): pass
         seed(DATA/'recordings.sqlite')  # Only on a clean first launch; never overwrite existing recordings.
         self.store=Store(DATA/'recordings.sqlite'); self.store.recover(); self.engine=Engine(self.store); self.engine.start()
-        self.sid=None; self.detail_sid=None; self.connected=False; self.latest=None; self.connection_generation=0; self.connection_pending=False; self.connect_started=0; self.retired_engines=[]; self.simulation_recovery_attempted=False; self.connection_timed_out=False; self.buffer=deque(maxlen=14400); self.viewer_sid=None
+        self.sid=None; self.detail_sid=None; self.connected=False; self.latest=None; self.connection_generation=0; self.connection_pending=False; self.connect_started=0; self.retired_engines=[]; self.simulation_recovery_attempted=False; self.connection_timed_out=False; self.buffer=deque(maxlen=172800); self.viewer_sid=None
         self.save_job=None; self.edit_loading=False; self.closing=False; self._shutdown_complete=False; self._tick_after_id=None; self.shutdown_warning_shown=False; self.last_plot=0; self.rec_count=0; self.rec_errors=0; self.pending=False; self.details_user_visible=True
         # Keep Windows awake for unattended acquisition; let the display turn off.
         # SetThreadExecutionState is thread-scoped and must be cleared on exit.
@@ -335,7 +362,7 @@ class App(tk.Tk):
         ttk.Checkbutton(toolbar,text='Follow',variable=self.follow).pack(side='left')
         ttk.Label(toolbar,text='Window').pack(side='left',padx=(9,3))
         self.window=tk.StringVar(value='5 min')
-        ttk.Combobox(toolbar,textvariable=self.window,values=['1 min','5 min','10 min','15 min','30 min','1 hour','Buffer data'],state='readonly',style='Live.TCombobox',width=9).pack(side='left',padx=(0,5))
+        ttk.Combobox(toolbar,textvariable=self.window,values=['1 min','5 min','10 min','15 min','30 min','1 hour','12 hours','24 hours','Buffer data'],state='readonly',style='Live.TCombobox',width=9).pack(side='left',padx=(0,5))
         ttk.Button(toolbar,text='Go to Live',style='Compact.TButton',command=lambda:self.follow.set(True)).pack(side='left')
         self.scale_mode=tk.StringVar(value='Auto')
         ttk.Radiobutton(toolbar,text='Auto scale',value='Auto',variable=self.scale_mode,command=self.select_live_scale).pack(side='left',padx=(10,0))
@@ -2110,12 +2137,13 @@ class App(tk.Tk):
             self.rec_label.config(text=f'{self.rec_count:,} samples  |  {self.rec_errors} errors')
         if self.latest and time.time()-self.latest['ts']>max(2,3*self.settings['interval']):self.reading_status.config(text='STALE  |  waiting for new reading',fg='#b45309')
         if self.page=='Live Monitor' and self.buffer and time.monotonic()-self.last_plot>.5:
-            self.last_plot=time.monotonic(); rows=list(self.buffer); end=rows[-1]['ts']; seconds={'1 min':60,'5 min':300,'10 min':600,'15 min':900,'30 min':1800,'1 hour':3600,'Buffer data':1e20}[self.window.get()]
+            self.last_plot=time.monotonic(); rows=list(self.buffer); end=rows[-1]['ts']; seconds={'1 min':60,'5 min':300,'10 min':600,'15 min':900,'30 min':1800,'1 hour':3600,'12 hours':43200,'24 hours':86400,'Buffer data':1e20}[self.window.get()]
             rows=[r for r in rows if r['ts']>=end-seconds] if self.follow.get() else rows
             from matplotlib.ticker import FuncFormatter, MaxNLocator, MultipleLocator, AutoMinorLocator
             # Fixed engineering-chart time divisions (seconds), independent of data count.
             time_grid={'1 min':(10,2),'5 min':(60,12),'10 min':(120,30),
-                       '15 min':(180,30),'30 min':(300,60),'1 hour':(600,120)}
+                       '15 min':(180,30),'30 min':(300,60),'1 hour':(600,120),
+                       '12 hours':(3600,900),'24 hours':(7200,1800)}
             if self.window.get() in time_grid:
                 major,minor=time_grid[self.window.get()]
                 self.lax.xaxis.set_major_locator(MultipleLocator(major))
@@ -2123,7 +2151,8 @@ class App(tk.Tk):
             else:
                 self.lax.xaxis.set_major_locator(MaxNLocator(nbins=5,min_n_ticks=2))
                 self.lax.xaxis.set_minor_locator(AutoMinorLocator(5))
-            self.line.set_data([r['ts'] for r in rows],[r['value'] if r['quality']=='OK' else math.nan for r in rows]);self.lax.set_ylabel('Pressure ('+self.settings['unit']+')');self.lax.yaxis.set_major_formatter(FuncFormatter(lambda p,pos:f'{from_psi(p,self.settings["unit"]):,.1f}'))
+            display_rows=reduce_live_samples(rows)
+            self.line.set_data([r['ts'] for r in display_rows],[r['value'] if r['quality']=='OK' else math.nan for r in display_rows]);self.lax.set_ylabel('Pressure ('+self.settings['unit']+')');self.lax.yaxis.set_major_formatter(FuncFormatter(lambda p,pos:f'{from_psi(p,self.settings["unit"]):,.1f}'))
             self.lax.xaxis.set_major_formatter(FuncFormatter(lambda x,pos:stamp(x,self.settings['utc_offset'])[11:19]))
             self.lax.tick_params(axis='x',labelrotation=0)
             from datetime import datetime,timezone,timedelta
@@ -2382,7 +2411,7 @@ class App(tk.Tk):
             messagebox.showerror('Pressure scale',str(exc))
 
     def window_seconds(self,name):
-        return {'1 min':60,'5 min':300,'10 min':600,'15 min':900,'30 min':1800,'1 hour':3600,'Buffer data':float('inf'),'All data':float('inf')}[name]
+        return {'1 min':60,'5 min':300,'10 min':600,'15 min':900,'30 min':1800,'1 hour':3600,'12 hours':43200,'24 hours':86400,'Buffer data':float('inf'),'All data':float('inf')}[name]
 
     def slide_live(self,value):
         if not self.buffer:return
