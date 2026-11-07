@@ -90,7 +90,7 @@ class App(tk.Tk):
         try: self.settings.update(json.loads((DATA/'settings.json').read_text()))
         except (OSError,ValueError): pass
         self.store=Store(DATA/'recordings.sqlite'); self.store.recover(); self.engine=Engine(self.store); self.engine.start()
-        self.sid=None; self.detail_sid=None; self.connected=False; self.latest=None; self.connection_generation=0; self.connection_pending=False; self.connect_started=0; self.retired_engines=[]; self.simulation_recovery_attempted=False; self.connection_timed_out=False; self.buffer=deque(maxlen=7200); self.viewer_sid=None
+        self.sid=None; self.detail_sid=None; self.connected=False; self.latest=None; self.connection_generation=0; self.connection_pending=False; self.connect_started=0; self.retired_engines=[]; self.simulation_recovery_attempted=False; self.connection_timed_out=False; self.buffer=deque(maxlen=14400); self.viewer_sid=None
         self.save_job=None; self.edit_loading=False; self.closing=False; self._shutdown_complete=False; self._tick_after_id=None; self.shutdown_warning_shown=False; self.last_plot=0; self.rec_count=0; self.rec_errors=0; self.pending=False; self.details_user_visible=True
         self.configure(bg=BG); style=ttk.Style(self); style.theme_use('clam')
         style.configure('.',font=(UI_FONT,10),background=BG,foreground=INK)
