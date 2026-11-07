@@ -90,3 +90,38 @@ def test_delete_annotation_and_recording(tmp_path):
     assert st.stats(sid)['n']==0
     assert st.events(sid)==[]
     assert not st.delete_session(sid)
+
+def test_canonical_psi_storage_and_display_conversion(tmp_path):
+    import pytest
+    from units import from_psi,to_psi
+    assert from_psi(5000,'psi')==5000
+    assert from_psi(5000,'bar')==pytest.approx(344.738,rel=1e-5)
+    assert from_psi(5000,'kPa')==pytest.approx(34473.786,rel=1e-5)
+    assert from_psi(5000,'MPa')==pytest.approx(34.4738,rel=1e-5)
+    for unit in ('psi','bar','kPa','MPa'):
+        assert to_psi(from_psi(5000,unit),unit)==pytest.approx(5000)
+
+    st=Store(tmp_path/'data.sqlite')
+    sid=st.start({**DEFAULTS,'unit':'kPa'},1000)
+    assert st.get(sid)['unit']=='psi'
+    st.add_sample(sid,dict(ts=1001,elapsed=1,value=5000.0,quality='OK',raw=5000,status=0,latency=.01))
+    st.finish(sid)
+    assert st.plot_rows(sid)[0]['value']==5000.0  # Never convert stored samples.
+    csv_path=tmp_path/'pressure.csv'
+    export(st,sid,csv_path,dict(xmin=0,xmax=1,ymin=0,ymax=5100))
+    import csv
+    with csv_path.open(encoding='utf-8-sig',newline='') as stream:
+        rows=list(csv.DictReader(stream))
+    assert rows[0]['pressure']=='5000.0'
+    assert rows[0]['unit']=='psi'
+
+def test_legacy_unit_metadata_migration_preserves_values(tmp_path):
+    db=tmp_path/'legacy.sqlite'
+    st=Store(db)
+    sid=st.start({**DEFAULTS,'unit':'kPa'},1000)
+    st.add_sample(sid,dict(ts=1001,elapsed=1,value=5000.0,quality='OK',raw=5000,status=0,latency=.01))
+    with st.connect() as c:
+        c.execute("UPDATE sessions SET unit='kPa' WHERE id=?",(sid,))
+    reopened=Store(db)
+    assert reopened.get(sid)['unit']=='psi'
+    assert reopened.plot_rows(sid)[0]['value']==5000.0
