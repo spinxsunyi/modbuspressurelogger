@@ -670,6 +670,30 @@ class App(tk.Tk):
                   foreground='#576677').pack(anchor='w',pady=(0,6))
         self.report_range_chart=ttk.Frame(section)
         self.report_range_chart.pack(fill='both',expand=True)
+        events_panel=ttk.LabelFrame(section,text='Event List — select an event to locate it on the graph',padding=(8,6))
+        events_panel.pack(fill='x',pady=(8,0))
+        events_toolbar=ttk.Frame(events_panel);events_toolbar.pack(fill='x',pady=(0,5))
+        ttk.Label(events_toolbar,text='Click an event to focus its timestamp; use Set Start / Set End to define the interval.',
+                  foreground='#576677').pack(side='left')
+        ttk.Button(events_toolbar,text='Set End',style='Compact.TButton',
+                   command=lambda:self.set_report_interval_from_event('end')).pack(side='right',padx=(6,0))
+        ttk.Button(events_toolbar,text='Set Start',style='Compact.TButton',
+                   command=lambda:self.set_report_interval_from_event('start')).pack(side='right')
+        event_table=ttk.Frame(events_panel);event_table.pack(fill='x')
+        columns=('number','time','event','pressure')
+        self.report_event_tree=ttk.Treeview(event_table,columns=columns,show='headings',
+                                            height=4,selectmode='browse')
+        for col,title,width in [('number','No.',55),('time','Time',175),
+                                ('event','Event',420),('pressure','Pressure',125)]:
+            self.report_event_tree.heading(col,text=title)
+            self.report_event_tree.column(col,width=width,stretch=col=='event',
+                 anchor='center' if col in ('number','pressure') else 'w')
+        event_scroll=ttk.Scrollbar(event_table,orient='vertical',command=self.report_event_tree.yview)
+        self.report_event_tree.configure(yscrollcommand=event_scroll.set)
+        self.report_event_tree.pack(side='left',fill='x',expand=True)
+        event_scroll.pack(side='right',fill='y')
+        self.report_event_tree.bind('<<TreeviewSelect>>',self.focus_report_event)
+        self.report_event_timestamps={}
         self.report_range_hint=ttk.Label(self.report_range_chart,text='Select a recording first.',
                                           foreground='#576677')
         self.report_range_hint.pack(pady=40)
@@ -885,6 +909,7 @@ class App(tk.Tk):
         ax.xaxis.set_major_locator(MaxNLocator(9))
         ax.grid(alpha=.2)
         self.report_graph_events=self.store.events(sid)
+        self.populate_report_events(sid)
         self.report_graph_event_artists=[]
         canvas=FigureCanvasTkAgg(fig,master=self.report_range_chart)
         canvas.get_tk_widget().pack(fill='both',expand=True)
@@ -936,6 +961,61 @@ class App(tk.Tk):
         self.change_report_range_mode()
         canvas.draw()
 
+    def populate_report_events(self,sid):
+        tree=self.report_event_tree
+        for row in tree.get_children():tree.delete(row)
+        self.report_event_timestamps={}
+        unit=self.report_unit.get()
+        with self.store.connect() as db:
+            for number,event in enumerate(self.report_graph_events,1):
+                ts=event['ts']
+                nearest=db.execute(
+                    "SELECT value FROM samples WHERE session=? AND quality='OK' AND value IS NOT NULL "
+                    "ORDER BY ABS(ts-?) LIMIT 1",(sid,ts)).fetchone()
+                psi=nearest['value'] if nearest else None
+                pressure=f"{from_psi(psi,unit):,.2f} {unit}" if psi is not None else 'N/A'
+                local=stamp(ts,self.report_graph_offset).replace('T',' ')[:19]
+                tree.insert('','end',iid=str(event['id']),
+                    values=(number,local,event['label'],pressure))
+                self.report_event_timestamps[str(event['id'])]=(ts,psi)
+
+    def update_report_event_pressures(self):
+        if not hasattr(self,'report_event_tree'):return
+        unit=self.report_unit.get()
+        for iid,(ts,psi) in self.report_event_timestamps.items():
+            if self.report_event_tree.exists(iid):
+                self.report_event_tree.set(iid,'pressure',
+                    f'{from_psi(psi,unit):,.2f} {unit}' if psi is not None else 'N/A')
+
+    def focus_report_event(self,event=None):
+        chosen=self.report_event_tree.selection()
+        if not chosen or not getattr(self,'report_range_canvas',None):return
+        ts,_=self.report_event_timestamps[chosen[0]]
+        x=(ts-self.report_graph_start)/60
+        ax=self.report_range_axes
+        width=max(.15,min(self.report_range_duration,ax.get_xlim()[1]-ax.get_xlim()[0]))
+        lo=max(0,min(self.report_range_duration-width,x-width/2))
+        ax.set_xlim(lo,lo+width)
+        self.set_report_x_view_fields(lo,lo+width)
+        self.report_range_canvas.draw_idle()
+
+    def set_report_interval_from_event(self,bound):
+        chosen=self.report_event_tree.selection()
+        if not chosen:
+            messagebox.showinfo('Event List','Select an event first.',parent=self);return
+        ts,_=self.report_event_timestamps[chosen[0]]
+        minute=max(0,min(self.report_range_duration,(ts-self.report_graph_start)/60))
+        self.report_range_mode.set('custom')
+        if bound=='start':
+            self.report_start.set(f'{minute:.3f}')
+            if float(self.report_end.get())<=minute:
+                self.report_end.set(f'{self.report_range_duration:.3f}')
+        else:
+            self.report_end.set(f'{minute:.3f}')
+            if float(self.report_start.get())>=minute:
+                self.report_start.set('0')
+        self.change_report_range_mode()
+
     def format_report_x_view(self,minutes):
         if self.report_axis.get()!='Date & Time':return f'{minutes:.3f}'
         from datetime import datetime
@@ -967,6 +1047,7 @@ class App(tk.Tk):
         self.report_graph_line.set_data(xs,values)
         ax.set_ylabel(f'Pressure ({unit})')
         self.report_y_label.configure(text=f'Y min / max ({unit})')
+        self.update_report_event_pressures()
         for artist in self.report_graph_event_artists:artist.remove()
         self.report_graph_event_artists=[]
         if self.report_events.get():
