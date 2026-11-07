@@ -82,7 +82,7 @@ class TimeScrollbar(ttk.Scrollbar):
 
 class App(tk.Tk):
     def __init__(self):
-        super().__init__(); self.title('Digital Pressure Recorder 0.2'); set_window_icon(self); self.geometry(f'{min(1440,self.winfo_screenwidth()-40)}x{min(900,self.winfo_screenheight()-100)}'); self.minsize(820,560); self.state('zoomed') if os.name=='nt' else None
+        super().__init__(); self.title('Digital Pressure Recorder 1.0'); set_window_icon(self); self.geometry(f'{min(1440,self.winfo_screenwidth()-40)}x{min(900,self.winfo_screenheight()-100)}'); self.minsize(820,560); self.state('zoomed') if os.name=='nt' else None
         DATA.mkdir(parents=True,exist_ok=True)
         self.instance_lock=InstanceLock(DATA/'app.lock')
         self.exporting=False
@@ -135,7 +135,7 @@ class App(tk.Tk):
         self.status_bar.pack(side='bottom',fill='x')
         self.footer=tk.Label(self.status_bar,text='Ready',bg=NAVY,fg='white',anchor='w',padx=10,pady=4)
         self.footer.pack(side='left')
-        self.credit=tk.Label(self.status_bar,text='Created by Eka Yudhi Pratama  •  November 2026',bg=NAVY,fg='white',anchor='e',padx=10,pady=4)
+        self.credit=tk.Label(self.status_bar,text='A software by Eka Yudhi Pratama  •  November 2026',bg=NAVY,fg='white',anchor='e',padx=10,pady=4)
         self.credit.pack(side='right')
         self.host=ttk.Frame(self,padding=14); self.host.pack(fill='both',expand=True)
         self.pages={name:ttk.Frame(self.host) for name in ['Live Monitor','History','Reporting','Settings','About','Viewer']}
@@ -641,13 +641,14 @@ class App(tk.Tk):
         ttk.Label(p,text='About Digital Pressure Recorder',style='Title.TLabel').pack(anchor='w',pady=(8,16))
         about=ttk.LabelFrame(p,text='Application information',padding=20)
         about.pack(fill='x',padx=4,pady=(0,12))
-        ttk.Label(about,text='Digital Pressure Recorder 0.2',font=(UI_FONT,16,'bold')).pack(anchor='w')
-        ttk.Label(about,text='Aplisens PMS-970 / Modbus RTU').pack(anchor='w',pady=8)
-        ttk.Label(about,text='Created by Eka Yudhi Pratama\nNovember 2026').pack(anchor='w')
-        ttk.Separator(about).pack(fill='x',pady=(14,10))
-        ttk.Label(about,text='Status key',font=(UI_FONT,11,'bold')).pack(anchor='w',pady=(0,6))
-        for label,color in [('LIVE','#137a45'),('DISCONNECTED','#b55c00'),('RECORDING','#c92c38'),('REC OFF','#576677')]:
-            tk.Label(about,text='●  '+label,bg=BG,fg=color,font=(UI_FONT,10)).pack(anchor='w',pady=3)
+        ttk.Label(about,text='Digital Pressure Recorder',font=(UI_FONT,16,'bold')).pack(anchor='w')
+        ttk.Label(about,text='Version: 1.0').pack(anchor='w',pady=(4,16))
+        ttk.Label(about,text='Supported devices',font=(UI_FONT,11,'bold')).pack(anchor='w',pady=(0,6))
+        ttk.Label(about,text='• Aplisens PMS-970 / Modbus RTU').pack(anchor='w',pady=3)
+        ttk.Label(about,text='• Next device coming soon — submit a request using the contact emails below.').pack(anchor='w',pady=3)
+        ttk.Separator(about).pack(fill='x',pady=(16,12))
+        ttk.Label(about,text='A software by Eka Yudhi Pratama',font=(UI_FONT,10,'bold')).pack(anchor='w',pady=(0,6))
+        ttk.Label(about,text='epratama2@slb.com / just_eka@ymail.com').pack(anchor='w')
 
     def find_ports(self):
         from serial.tools.list_ports import comports
