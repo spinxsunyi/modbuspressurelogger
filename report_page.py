@@ -48,7 +48,7 @@ def report_figure(store, sid, unit='psi', time_range=None, time_axis='Elapsed Ti
             txt(x+.13,.875-i*.024,str(value or '—')[:37],8)
     rule(.741)
     txt(.06,.726,'PRESSURE TREND',10,True)
-    ax=fig.add_axes([.105,.425,.83,.265])
+    ax=fig.add_axes([.105,.455,.83,.235])
     start=session['started']
     xx=[(r['ts']-start)/60 for r in rows]
     yy=[from_psi(r['value'],unit) if r['quality']=='OK' and r['value'] is not None else math.nan for r in rows]
@@ -64,18 +64,35 @@ def report_figure(store, sid, unit='psi', time_range=None, time_axis='Elapsed Ti
     ax.xaxis.set_major_locator(MaxNLocator(6))
     ax.grid(alpha=.22,visible=show_grid)
     ax.tick_params(labelsize=8)
-    txt(.06,.383,'MIN  '+fmt(ext[0]),8,True)
-    txt(.31,.383,'MAX  '+fmt(ext[1]),8,True)
-    txt(.56,.383,'FIRST  '+fmt(first['value'] if first else None),8,True)
-    txt(.79,.383,'LAST  '+fmt(last['value'] if last else None),8,True)
-    rule(.346)
-    txt(.06,.333,'EVENT LIST',10,True)
-    if not events: txt(.06,.309,'No event annotations',8,color=gray)
+    # The four statistics are computed from the selected interval above, not the full recording.
+    # Keep the summary well below the X-axis title and its two-line date/time ticks.
+    txt(.06,.365,'MIN  '+fmt(ext[0]),9,True)
+    txt(.31,.365,'MAX  '+fmt(ext[1]),9,True)
+    txt(.56,.365,'FIRST  '+fmt(first['value'] if first else None),9,True)
+    txt(.79,.365,'LAST  '+fmt(last['value'] if last else None),9,True)
+    rule(.331)
+    txt(.06,.318,'EVENT LIST',11,True)
+    txt(.06,.294,'NO.',8,True,color=gray)
+    txt(.125,.294,'TIME',8,True,color=gray)
+    txt(.25,.294,'EVENT',8,True,color=gray)
+    txt(.79,.294,'PRESSURE',8,True,color=gray)
+    if not events:
+        txt(.06,.268,'No event annotations in the selected interval',9,color=gray)
     else:
-        for i,e in enumerate(events[:6],1):
-            label=str(e['label']).replace('\n',' ')[:58]
-            txt(.06,.309-(i-1)*.026,f"{i:02d}  {stamp(e['ts'],offset)[11:19]}    {label}",8)
-        if len(events)>6:txt(.06,.151,f'+ {len(events)-6} more events (see recording history)',8,color=gray)
+        with store.connect() as db:
+            for i,e in enumerate(events[:5],1):
+                label=str(e['label']).replace('\\n',' ')[:50]
+                reading=db.execute(
+                    "SELECT value FROM samples WHERE session=? AND quality='OK' AND value IS NOT NULL "
+                    "ORDER BY ABS(ts-?) LIMIT 1",(sid,e['ts'])).fetchone()
+                pressure=fmt(reading['value'] if reading else None)
+                y=.268-(i-1)*.024
+                txt(.06,y,f'{i:02d}',9)
+                txt(.125,y,stamp(e['ts'],offset)[11:19],9)
+                txt(.25,y,label,9)
+                txt(.79,y,pressure,9)
+        if len(events)>5:
+            txt(.06,.146,f'+ {len(events)-5} more events (see recording history)',8,color=gray)
     rule(.14)
     txt(.06,.128,'NOTES',10,True)
     import textwrap
