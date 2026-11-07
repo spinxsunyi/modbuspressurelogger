@@ -90,7 +90,7 @@ class App(tk.Tk):
         try: self.settings.update(json.loads((DATA/'settings.json').read_text()))
         except (OSError,ValueError): pass
         self.store=Store(DATA/'recordings.sqlite'); self.store.recover(); self.engine=Engine(self.store); self.engine.start()
-        self.sid=None; self.detail_sid=None; self.connected=False; self.latest=None; self.connection_generation=0; self.connection_pending=False; self.connect_started=0; self.retired_engines=[]; self.simulation_recovery_attempted=False; self.buffer=deque(maxlen=7200); self.viewer_sid=None
+        self.sid=None; self.detail_sid=None; self.connected=False; self.latest=None; self.connection_generation=0; self.connection_pending=False; self.connect_started=0; self.retired_engines=[]; self.simulation_recovery_attempted=False; self.connection_timed_out=False; self.buffer=deque(maxlen=7200); self.viewer_sid=None
         self.save_job=None; self.edit_loading=False; self.closing=False; self._shutdown_complete=False; self._tick_after_id=None; self.shutdown_warning_shown=False; self.last_plot=0; self.rec_count=0; self.rec_errors=0; self.pending=False; self.details_user_visible=True
         self.configure(bg=BG); style=ttk.Style(self); style.theme_use('clam')
         style.configure('.',font=(UI_FONT,10),background=BG,foreground=INK)
@@ -368,6 +368,7 @@ class App(tk.Tk):
         self.connection_pending=True
         self.connect_started=time.monotonic()
         self.simulation_recovery_attempted=False
+        self.connection_timed_out=False
         self.connected=False
         self.latest=None
         self.buffer.clear()
@@ -1004,6 +1005,7 @@ class App(tk.Tk):
                 if kind=='sample':
                     s=d['sample'];self.latest=s;self.buffer.append(s)
                     self.connection_pending=False
+                    self.connection_timed_out=False
                     self.connect_btn.config(state='normal')
                     if s['quality']=='OK':self.value.config(text=f"{from_psi(s['value'],self.settings['unit']):,.2f} {self.settings['unit']}")
                     self.reading_status.config(text=f"{self.settings['mode'].upper()}  |  {s['quality']}  |  {stamp(s['ts'],self.settings['utc_offset'])[11:23]}",fg='#008b92' if s['quality']=='OK' else '#b45309')
@@ -1054,8 +1056,26 @@ class App(tk.Tk):
                 self.lax.set_autoscaley_on(self.live_auto.get());self.lax.relim();self.lax.autoscale_view(scaley=self.live_auto.get());self.lax.set_xlim(max(rows[0]['ts'],end-seconds),max(end,rows[0]['ts']+1))
             self.lcanvas.draw_idle()
         self._check_connection_watchdog()
+        self._check_modbus_timeout()
         self.update_enhancements()
         self._tick_after_id=self.after(80,self.tick)
+    def _check_modbus_timeout(self):
+        """Report missing Modbus replies even when the serial worker is blocked."""
+        if self.settings['mode']!='Modbus RTU' or self.connection_timed_out:
+            return
+        if not self.connect_started or time.monotonic()-self.connect_started<5:
+            return
+        if self.latest and self.latest['quality']=='OK' and time.time()-self.latest['ts']<=max(2,3*self.settings['interval']):
+            return
+        self.connection_timed_out=True
+        self.connection_pending=False
+        self.reading_status.config(text='CONNECTION TIMEOUT  |  NO DATA',fg='#b45309')
+        self.connection.config(text='Modbus RTU  |  '+(self.settings['port'] or 'No port')+'  |  timeout')
+        self.connect_btn.config(text='Disconnect',state='normal')
+        self.footer.config(text='No valid Modbus response within 5 seconds; check port and device')
+        # Do not pretend a serial worker was stopped: it may still be blocked.
+        # A late valid sample may recover the status normally.
+
     def _check_connection_watchdog(self):
         """Recover a stalled Modbus-to-Simulation switch without blocking Tk."""
         if not self.connection_pending or self.settings['mode']!='Simulation' or self.simulation_recovery_attempted:
@@ -1339,7 +1359,7 @@ class App(tk.Tk):
 
     def update_enhancements(self):
         valid=not self.connection_pending and self.connected and self.latest and self.latest['quality']=='OK' and time.time()-self.latest['ts']<=max(2,3*self.settings['interval'])
-        self.status_live.config(text=('SIMULATION MODE' if self.settings['mode']=='Simulation' else '● LIVE') if valid else ('CONNECTING...' if self.connection_pending else 'DISCONNECTED / NO DATA'),bg=('#415875' if self.settings['mode']=='Simulation' else '#137a45') if valid else '#b55c00',fg='white',padx=8,pady=4)
+        self.status_live.config(text=('SIMULATION MODE' if self.settings['mode']=='Simulation' else '● LIVE') if valid else ('CONNECTING...' if self.connection_pending else 'CONNECTION TIMEOUT' if self.connection_timed_out else 'DISCONNECTED / NO DATA'),bg=('#415875' if self.settings['mode']=='Simulation' else '#137a45') if valid else '#b55c00',fg='white',padx=8,pady=4)
         self.status_rec.config(text=f'● REC {int(time.monotonic()-self.rec_started)//60:02}:{int(time.monotonic()-self.rec_started)%60:02}' if self.sid else 'REC OFF',bg='#c92c38' if self.sid else '#576677',fg='white',padx=8,pady=4)
         if time.monotonic()-self.enhanced_last<1:return
         self.enhanced_last=time.monotonic()
