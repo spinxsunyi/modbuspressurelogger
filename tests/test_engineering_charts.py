@@ -171,3 +171,24 @@ def test_pressure_grid_respects_display_units(unit):
     display_step=from_psi(raw_step,unit)
     assert display_step==pytest.approx(nice_pressure_step(from_psi(5000,unit)))
     assert ax.get_ylim()==pytest.approx((0,5000))
+
+
+def test_excel_embedded_chart_uses_engineering_major_and_minor_grid(tmp_path):
+    from exports import figure
+    from core import Store, DEFAULTS
+    from matplotlib.ticker import MultipleLocator
+    st=Store(tmp_path/'chart.sqlite')
+    sid=st.start(DEFAULTS,1000)
+    for i in range(97):
+        st.add_sample(sid,dict(ts=1000+i*30,elapsed=i*30,value=2500,
+                               quality='OK',raw=None,status=None,latency=0))
+    st.finish(sid)
+    chart=figure(st.plot_rows(sid),[],st.get(sid),{'title':'Excel chart'})
+    ax=chart.axes[0]
+    assert ax.get_xlim()==pytest.approx((0,50))
+    assert isinstance(ax.xaxis.get_major_locator(),MultipleLocator)
+    assert isinstance(ax.xaxis.get_minor_locator(),MultipleLocator)
+    assert isinstance(ax.yaxis.get_major_locator(),MultipleLocator)
+    assert isinstance(ax.yaxis.get_minor_locator(),MultipleLocator)
+    assert any(math.isclose(t,10,abs_tol=1e-6) for t in ax.xaxis.get_majorticklocs())
+    assert any(math.isclose(t,2,abs_tol=1e-6) for t in ax.xaxis.get_minorticklocs())
