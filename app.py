@@ -331,6 +331,7 @@ class App(tk.Tk):
         self.live_toolbar=ttk.Frame(main); toolbar=self.live_toolbar
         toolbar.pack(fill='x',pady=(2,4))
         self.follow=tk.BooleanVar(value=True)
+        self.live_window_origin=None
         ttk.Checkbutton(toolbar,text='Follow',variable=self.follow).pack(side='left')
         ttk.Label(toolbar,text='Window').pack(side='left',padx=(9,3))
         self.window=tk.StringVar(value='5 min')
@@ -2066,6 +2067,7 @@ class App(tk.Tk):
                     continue
                 if kind=='sample':
                     s=d['sample'];self.latest=s;self.buffer.append(s)
+                    if self.live_window_origin is None:self.live_window_origin=s['ts']
                     self.connection_pending=False
                     self.connection_timed_out=False
                     self.connect_btn.config(state='normal')
@@ -2073,6 +2075,7 @@ class App(tk.Tk):
                     self.reading_status.config(text=f"{self.settings['mode'].upper()}  |  {s['quality']}  |  {stamp(s['ts'],self.settings['utc_offset'])[11:23]}",fg='#008b92' if s['quality']=='OK' else '#b45309')
                     if d['sid']:self.rec_count+=1;self.rec_errors+=s['quality']!='OK'
                 elif kind=='connected':
+                    self.live_window_origin=None
                     self.connected=True
                     self.connection.config(text=d['settings']['mode']+'  |  '+(d['settings']['port'] or 'virtual sensor'))
                     self.connect_btn.config(text='Disconnect',state='normal')
@@ -2118,7 +2121,7 @@ class App(tk.Tk):
             date=datetime.fromtimestamp(end,timezone(timedelta(hours=self.settings['utc_offset']))).strftime('%d %b %Y')
             self.lax.set_xlabel(date+'  |  UTC'+f'{self.settings["utc_offset"]:+g}')
             if self.follow.get():
-                self.lax.set_autoscaley_on(self.live_auto.get());self.lax.relim();self.lax.autoscale_view(scaley=self.live_auto.get());self.lax.set_xlim(max(rows[0]['ts'],end-seconds),max(end,rows[0]['ts']+1))
+                self.lax.set_autoscaley_on(self.live_auto.get());self.lax.relim();self.lax.autoscale_view(scaley=self.live_auto.get());self.lax.set_xlim(max(self.live_window_origin if self.live_window_origin is not None else rows[0]['ts'],end-seconds),max(self.live_window_origin if self.live_window_origin is not None else rows[0]['ts'],end-seconds)+seconds if seconds<1e19 else max(end,rows[0]['ts']+1))
             self.lcanvas.draw_idle()
         self._check_connection_watchdog()
         self._check_modbus_timeout()
