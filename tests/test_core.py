@@ -194,3 +194,33 @@ def test_demo_pce_pressure_profile():
     assert abs(pressure_at(STEP_END + 450) - 4900) < 10
     assert pressure_at(TEST_END) < 5
     assert HIGH_HOLD_END - STEP_END == 600
+
+
+def test_continuous_50_minute_recording_has_five_ten_minute_samples(tmp_path):
+    """Continuous 0.5 s acquisition for [0,50) min yields buckets 0,10,20,30,40."""
+    import xml.etree.ElementTree as ET
+    import pytest
+    st=Store(tmp_path/'continuous.sqlite')
+    start=1_700_000_000
+    sid=st.start({**DEFAULTS,'interval':0.5},start)
+    for i in range(6000):
+        elapsed=i*0.5
+        st.add_sample(sid,dict(ts=start+elapsed,elapsed=elapsed,
+                               value=1000+i/10,quality='OK',raw=None,status=None,latency=0))
+    st.finish(sid)
+    output=tmp_path/'continuous.xlsx'
+    export(st,sid,output,{'title':'Continuous 50 minute validation'})
+    ns={'m':'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
+    with zipfile.ZipFile(output) as archive:
+        root=ET.fromstring(archive.read('xl/worksheets/sheet5.xml'))
+    rows=root.findall('m:sheetData/m:row',ns)
+    assert len(rows)==6  # header + five scheduled data points
+    elapsed_minutes=[]
+    pressures=[]
+    for row in rows[1:]:
+        cells={cell.attrib['r'].rstrip('0123456789'):cell.findtext('m:v',namespaces=ns)
+               for cell in row.findall('m:c',ns)}
+        elapsed_minutes.append(float(cells['C']))
+        pressures.append(float(cells['D']))
+    assert elapsed_minutes==pytest.approx([0,10,20,30,40])
+    assert pressures==pytest.approx([1000,1120,1240,1360,1480])
