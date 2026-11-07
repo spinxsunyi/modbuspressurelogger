@@ -211,7 +211,7 @@ class App(tk.Tk):
             self.follow.set(False)
             self.lcanvas.draw_idle()
         else:
-            self.history_window.set('Buffer data')
+            self.history_window.set('All data')
             self.view_vars['xmin'].set(str(new_lo))
             self.view_vars['xmax'].set(str(new_lo+width))
             self.vcanvas.draw_idle()
@@ -223,7 +223,7 @@ class App(tk.Tk):
             self.live_auto.set(True)
             self.scale_mode.set('Auto')
         else:
-            self.history_window.set('Buffer data')
+            self.history_window.set('All data')
             self.viewer_scale_mode.set('Auto')
             self.auto_history_scale()
             self.slide_history(0)
@@ -252,7 +252,7 @@ class App(tk.Tk):
                 self.follow.set(True)
                 self.lax.set_autoscaley_on(True)
             else:
-                self.history_window.set('Buffer data')
+                self.history_window.set('All data')
                 self.viewer_scale_mode.set('Auto')
                 self.auto_history_scale()
                 self.slide_history(0)
@@ -1665,10 +1665,10 @@ class App(tk.Tk):
 
         self.viewer_toolbar=ttk.Frame(p);toolbar=self.viewer_toolbar
         toolbar.pack(fill='x',pady=(0,7))
-        self.history_window=tk.StringVar(value='Buffer data')
+        self.history_window=tk.StringVar(value='All data')
         ttk.Label(toolbar,text='Window').pack(side='left')
         time_box=ttk.Combobox(toolbar,textvariable=self.history_window,
-                             values=['1 min','5 min','10 min','15 min','30 min','1 hour','Buffer data'],
+                             values=['1 min','5 min','10 min','15 min','30 min','1 hour','All data'],
                              state='readonly',width=10)
         time_box.pack(side='left',padx=(5,12))
         time_box.bind('<<ComboboxSelected>>',lambda e:self.slide_history(0))
@@ -2331,7 +2331,7 @@ class App(tk.Tk):
             messagebox.showerror('Pressure scale',str(exc))
 
     def window_seconds(self,name):
-        return {'1 min':60,'5 min':300,'10 min':600,'15 min':900,'30 min':1800,'1 hour':3600,'Buffer data':float('inf')}[name]
+        return {'1 min':60,'5 min':300,'10 min':600,'15 min':900,'30 min':1800,'1 hour':3600,'Buffer data':float('inf'),'All data':float('inf')}[name]
 
     def slide_live(self,value):
         if not self.buffer:return
