@@ -1320,6 +1320,7 @@ class App(tk.Tk):
         else:
             try:ax.set_ylim(*self.get_report_y_limits())
             except ValueError:pass
+        apply_pressure_grid(ax,*ax.get_ylim())
         ax.set_xlim(*prior_xlim)
         self.set_report_x_view_fields(*prior_xlim)
         self.report_range_canvas.draw_idle()
@@ -2116,6 +2117,7 @@ class App(tk.Tk):
             self.lax.set_xlabel(date+'  |  UTC'+f'{self.settings["utc_offset"]:+g}')
             if self.follow.get():
                 self.lax.set_autoscaley_on(self.live_auto.get());self.lax.relim();self.lax.autoscale_view(scaley=self.live_auto.get());self.lax.set_xlim(max(self.live_window_origin if self.live_window_origin is not None else rows[0]['ts'],end-seconds),max(self.live_window_origin if self.live_window_origin is not None else rows[0]['ts'],end-seconds)+seconds if seconds<1e19 else max(end,rows[0]['ts']+1))
+            apply_pressure_grid(self.lax,*self.lax.get_ylim())
             self.lcanvas.draw_idle()
         self._check_connection_watchdog()
         self._check_modbus_timeout()
