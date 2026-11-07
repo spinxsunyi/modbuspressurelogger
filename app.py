@@ -295,7 +295,12 @@ class App(tk.Tk):
         ttk.Entry(bar,textvariable=self.search,width=45).pack(side='left'); ttk.Button(bar,text='Search / Refresh',command=self.refresh_history).pack(side='left',padx=8)
         ttk.Label(bar,text='Search well, job, engineer or record ID').pack(side='left')
         cols=('start','well','job','duration','mode','status'); self.history=ttk.Treeview(p,columns=cols,show='headings',selectmode='browse')
-        for col in cols:self.history.heading(col,text=col.title());self.history.column(col,width=150)
+        widths={'start':(170,130),'well':(220,110),'job':(240,120),
+                'duration':(115,80),'mode':(135,85),'status':(130,85)}
+        for col in cols:
+            self.history.heading(col,text=col.title())
+            width,minimum=widths[col]
+            self.history.column(col,width=width,minwidth=minimum,stretch=True)
         self.history.pack(fill='both',expand=True); self.history.bind('<Double-1>',lambda e:self.open_selected())
         ttk.Button(p,text='Open in Viewer',style='Accent.TButton',command=self.open_selected).pack(anchor='e',pady=12)
     def refresh_history(self):
@@ -310,26 +315,36 @@ class App(tk.Tk):
     def make_settings(self):
         p=self.pages['Settings']; ttk.Label(p,text='Settings',style='Title.TLabel').pack(anchor='w',pady=8)
         ttk.Label(p,text='Connection and unit changes apply after reconnecting. Stop recording before applying settings.').pack(anchor='w')
-        columns=ttk.Frame(p);columns.pack(fill='x',pady=5)
-        grid=ttk.LabelFrame(columns,text='Device connection',padding=8);grid.grid(row=0,column=0,sticky='ew')
-        display=ttk.LabelFrame(columns,text='Acquisition & display',padding=8);display.grid(row=1,column=0,sticky='ew')
-        about=ttk.LabelFrame(columns,text='About',padding=14);about.grid(row=0,column=1,rowspan=2,sticky='nsew',padx=12)
+        columns=ttk.Frame(p);columns.pack(fill='both',expand=True,pady=(12,8))
+        self.settings_columns=columns
+        columns.columnconfigure(0,weight=3);columns.columnconfigure(1,weight=2)
+        grid=ttk.LabelFrame(columns,text='Device connection',padding=14)
+        grid.grid(row=0,column=0,sticky='nsew',padx=(0,8),pady=(0,10))
+        display=ttk.LabelFrame(columns,text='Acquisition & display',padding=14)
+        display.grid(row=1,column=0,sticky='nsew',padx=(0,8))
+        about=ttk.LabelFrame(columns,text='About',padding=18)
+        about.grid(row=0,column=1,rowspan=2,sticky='nsew',padx=(8,0))
+        self.settings_device=grid;self.settings_display=display;self.settings_about=about
+        grid.columnconfigure(1,weight=1);display.columnconfigure(1,weight=1)
         ttk.Label(about,text='Digital Pressure Recorder',font=(UI_FONT,16,'bold')).pack(anchor='w')
         ttk.Label(about,text='Aplisens PMS-970 / Modbus RTU').pack(anchor='w',pady=8)
         ttk.Label(about,text='Created by Eka Yudhi Pratama\nNovember 2026').pack(anchor='w')
+        ttk.Separator(about).pack(fill='x',pady=(14,10))
+        ttk.Label(about,text='Status key',font=(UI_FONT,11,'bold')).pack(anchor='w',pady=(0,6))
         for label,color in [('LIVE','#137a45'),('DISCONNECTED','#b55c00'),('RECORDING','#c92c38'),('REC OFF','#576677')]:
-            tk.Label(about,text='● '+label,fg=color).pack(anchor='w',pady=2)
+            tk.Label(about,text='●  '+label,bg=BG,fg=color,font=(UI_FONT,10)).pack(anchor='w',pady=3)
         self.config_vars={}
         choices={'mode':['Simulation','Modbus RTU'],'baud':[2400,4800,9600,19200],'parity':['E','N','O'],'stopbits':[1,2],'interval':[.5,1,.2,.1],'unit':['psi','bar','kPa','MPa'],'utc_offset':[7,8,0]}
         for n,k in enumerate(['mode','port','baud','parity','stopbits','address','interval','unit','utc_offset']):
             parent=grid if n<6 else display
-            ttk.Label(parent,text={'utc_offset':'UTC offset','interval':'Interval (seconds)','baud':'Baud rate','stopbits':'Stop bits'}.get(k,k.title())).grid(row=n,column=0,sticky='w',padx=8,pady=2)
+            row=n if n<6 else n-6
+            ttk.Label(parent,text={'utc_offset':'UTC offset','interval':'Interval (seconds)','baud':'Baud rate','stopbits':'Stop bits'}.get(k,k.title())).grid(row=row,column=0,sticky='w',padx=(0,12),pady=5)
             v=tk.StringVar(value=str(self.settings[k])); self.config_vars[k]=v
             if k=='port':
                 en=ttk.Combobox(parent,textvariable=v,state='readonly',width=30); self.port_combo=en
             elif k in choices:en=ttk.Combobox(parent,textvariable=v,values=choices[k],state='readonly',width=30)
             else:en=ttk.Entry(parent,textvariable=v,width=32)
-            en.grid(row=n,column=1,sticky='ew')
+            en.grid(row=row,column=1,sticky='ew',pady=4)
         ttk.Button(grid,text='Refresh ports',command=self.find_ports).grid(row=1,column=2,padx=10)
         self.port_count=ttk.Label(grid);self.port_count.grid(row=2,column=2)
         self.auto=tk.BooleanVar(value=self.settings['auto_connect']); ttk.Checkbutton(p,text='Auto-connect last configuration at startup',variable=self.auto).pack(anchor='w',pady=8)
@@ -526,13 +541,17 @@ class App(tk.Tk):
         self.live_events.bind('<Double-1>',self.edit_live_event)
         viewer=self.pages['Viewer']
         summary=ttk.Frame(viewer)
-        summary.pack(before=viewer.winfo_children()[1],fill='x')
+        summary.pack(before=viewer.winfo_children()[1],fill='x',pady=(8,4))
         self.viewer_metrics=[]
         for index,title in enumerate(('Recording minimum','Recording maximum','Duration')):
             summary.columnconfigure(index,weight=1,uniform='summary')
-            tk.Label(summary,text=title,anchor='w',bg='white',fg='#17334c',padx=8).grid(row=0,column=index,sticky='ew',padx=2)
-            label=tk.Label(summary,text='—',bg='white',fg='#17334c',font=(UI_FONT,16,'bold'),anchor='w',padx=8)
-            label.grid(row=1,column=index,sticky='ew',padx=2)
+            card=tk.Frame(summary,bg=SURFACE,highlightthickness=1,highlightbackground=BORDER)
+            card.grid(row=0,column=index,sticky='nsew',padx=(0,8) if index<2 else (0,0))
+            tk.Label(card,text=title,anchor='w',bg=SURFACE,fg=NAVY,
+                     font=(UI_FONT,11,'bold')).pack(fill='x',padx=12,pady=(8,2))
+            label=tk.Label(card,text='—',bg=SURFACE,fg=INK,
+                           font=(UI_FONT,19,'bold'),anchor='w')
+            label.pack(fill='x',padx=12,pady=(2,12))
             self.viewer_metrics.append(label)
         bar=ttk.Frame(self.vcanvas.get_tk_widget().master);bar.pack(before=self.vcanvas.get_tk_widget(),fill='x')
         self.history_window=tk.StringVar(value='All time')
@@ -564,15 +583,30 @@ class App(tk.Tk):
         self.find_ports()
 
     def adapt_width(self,event):
-        if event.widget!=self: return
-        compact=event.width<1150
-        if compact!=getattr(self,'compact',None):
-            self.compact=compact
-            self.brand.config(font=(UI_FONT,14 if compact else 20,'bold'),padx=6 if compact else 20)
-            for button in self.nav_buttons.values():button.config(padx=6 if compact else 18)
-            visible=str(self.details_panel) in self.live_pane.panes()
-            if compact and visible: self.live_pane.forget(self.details_panel)
-            elif not compact and not visible: self.live_pane.add(self.details_panel,weight=1)
+        if event.widget!=self:return
+        compact=event.width<1120
+        if compact==getattr(self,'compact',None):return
+        self.compact=compact
+        self.brand.config(font=(UI_FONT,14 if compact else 20,'bold'),
+                          padx=6 if compact else 18)
+        for button in self.nav_buttons.values():
+            button.config(padx=6 if compact else 15)
+        visible=str(self.details_panel) in self.live_pane.panes()
+        if compact and visible:
+            self.live_pane.forget(self.details_panel)
+        elif not compact and self.details_user_visible and not visible:
+            self.live_pane.add(self.details_panel,weight=1)
+        # Stack the About panel when the settings grid becomes too narrow.
+        self.settings_device.grid_configure(padx=(0,0) if compact else (0,8))
+        self.settings_display.grid_configure(padx=(0,0) if compact else (0,8))
+        self.settings_about.grid_forget()
+        if compact:
+            self.settings_columns.columnconfigure(1,weight=0)
+            self.settings_about.grid(row=2,column=0,sticky='ew',pady=(12,0))
+        else:
+            self.settings_columns.columnconfigure(1,weight=2)
+            self.settings_about.grid(row=0,column=1,rowspan=2,
+                                     sticky='nsew',padx=(8,0))
 
     def apply_live_scale(self):
         try:
