@@ -578,6 +578,16 @@ class App(tk.Tk):
         self.report_to_entry.pack(side='left',padx=(6,16))
         ttk.Label(section,text='Select a span directly on the full recording graph, or edit the minute values precisely.',
                   foreground='#576677').pack(anchor='w',pady=(0,8))
+        scale=ttk.Frame(section);scale.pack(fill='x',pady=(0,8))
+        self.report_view_xmin=tk.StringVar(value='0')
+        self.report_view_xmax=tk.StringVar(value='0')
+        self.report_ymin=tk.StringVar(value='')
+        self.report_ymax=tk.StringVar(value='')
+        for label,var in [('X from (min)',self.report_view_xmin),('X to (min)',self.report_view_xmax),('Y min',self.report_ymin),('Y max',self.report_ymax)]:
+            ttk.Label(scale,text=label).pack(side='left',padx=(8,3))
+            ttk.Entry(scale,textvariable=var,width=9).pack(side='left')
+        ttk.Button(scale,text='Apply Scale',style='Compact.TButton',command=self.apply_report_scale).pack(side='left',padx=8)
+        ttk.Button(scale,text='Reset Zoom',style='Compact.TButton',command=self.reset_report_zoom).pack(side='left')
         self.report_range_chart=ttk.Frame(section)
         self.report_range_chart.pack(fill='both',expand=True)
         self.report_range_hint=ttk.Label(self.report_range_chart,
@@ -684,6 +694,9 @@ class App(tk.Tk):
         except ValueError as exc:
             messagebox.showerror('Time range',str(exc),parent=self);return
         if self.report_step!=3:return
+        try:y_limits=self.get_report_y_limits()
+        except ValueError as exc:
+            messagebox.showerror('Graph scale',str(exc),parent=self);return
         # Recreate on each visit so edits to notes/events are reflected.
         for child in self.reporting_preview.winfo_children():child.destroy()
         try:
@@ -692,7 +705,7 @@ class App(tk.Tk):
             if fmt in ('xlsx','csv'):
                 ttk.Label(self.reporting_preview,text='Detailed data export includes original samples within the selected time range.').pack(padx=24,pady=40)
                 return
-            fig=report_figure(self.store,sid,self.report_unit.get(),time_range,self.report_axis.get(),self.report_events.get(),self.report_grid.get()) if fmt=='pdf' else graph_figure(self.store,sid,self.report_unit.get(),time_range,self.report_axis.get(),self.report_events.get(),self.report_grid.get())
+            fig=report_figure(self.store,sid,self.report_unit.get(),time_range,self.report_axis.get(),self.report_events.get(),self.report_grid.get(),y_limits) if fmt=='pdf' else graph_figure(self.store,sid,self.report_unit.get(),time_range,self.report_axis.get(),self.report_events.get(),self.report_grid.get(),y_limits)
             canvas=FigureCanvasTkAgg(fig,master=self.reporting_preview)
             widget=canvas.get_tk_widget()
             widget.pack(padx=12,pady=12)
@@ -712,6 +725,8 @@ class App(tk.Tk):
         if getattr(self,'report_range_canvas',None):
             self.report_range_selector.set_active(custom)
             self.report_range_shade.set_visible(custom)
+            self.report_excluded_left.set_visible(custom)
+            self.report_excluded_right.set_visible(custom)
             self.report_range_left.set_visible(custom)
             self.report_range_right.set_visible(custom)
             self.report_range_canvas.draw_idle()
@@ -722,6 +737,9 @@ class App(tk.Tk):
         if not session:return
         if self.report_range_sid!=sid:self.reset_report_range()
         if self.report_inline_sid==sid:return
+        self.report_view_xmin.set('0')
+        self.report_view_xmax.set(f'{max(((session["ended"] or self.store.stats(sid)["last"] or session["started"])-session["started"])/60,.001):.3f}')
+        self.report_ymin.set('');self.report_ymax.set('')
         from matplotlib.widgets import SpanSelector
         from matplotlib.ticker import MaxNLocator
         rows=self.store.plot_rows(sid)
@@ -743,11 +761,17 @@ class App(tk.Tk):
         ax.grid(alpha=.2)
         canvas=FigureCanvasTkAgg(fig,master=self.report_range_chart)
         canvas.get_tk_widget().pack(fill='both',expand=True)
-        self.report_range_shade=ax.axvspan(0,duration,color=TEAL,alpha=.16)
+        self.report_range_shade=ax.axvspan(0,duration,color='#44b99f',alpha=.28)
+        self.report_excluded_left=ax.axvspan(0,0,color='#8a929b',alpha=.48)
+        self.report_excluded_right=ax.axvspan(duration,duration,color='#8a929b',alpha=.48)
+        self.report_range_axes=ax
+        self.report_range_duration=duration
         self.report_range_left=ax.axvline(0,color=TEAL,lw=1.5,ls='--')
         self.report_range_right=ax.axvline(duration,color=TEAL,lw=1.5,ls='--')
         def redraw(lo,hi):
             self.report_range_shade.set_xy([[lo,0],[lo,1],[hi,1],[hi,0],[lo,0]])
+            self.report_excluded_left.set_xy([[0,0],[0,1],[lo,1],[lo,0],[0,0]])
+            self.report_excluded_right.set_xy([[hi,0],[hi,1],[duration,1],[duration,0],[hi,0]])
             self.report_range_left.set_xdata([lo,lo])
             self.report_range_right.set_xdata([hi,hi])
             canvas.draw_idle()
@@ -768,10 +792,53 @@ class App(tk.Tk):
             except ValueError:pass
         self.report_start.trace_add('write',sync_fields)
         self.report_end.trace_add('write',sync_fields)
+        def wheel(event):
+            if event.inaxes is not ax or event.xdata is None:return
+            lo,hi=ax.get_xlim()
+            factor=.8 if event.button=='up' else 1.25
+            span=max(.01,min(duration,(hi-lo)*factor))
+            center=max(span/2,min(duration-span/2,event.xdata))
+            ax.set_xlim(center-span/2,center+span/2)
+            self.report_view_xmin.set(f'{ax.get_xlim()[0]:.3f}')
+            self.report_view_xmax.set(f'{ax.get_xlim()[1]:.3f}')
+            canvas.draw_idle()
+        canvas.mpl_connect('scroll_event',wheel)
         self.report_range_canvas=canvas
         self.report_inline_sid=sid
         self.change_report_range_mode()
         canvas.draw()
+
+    def apply_report_scale(self):
+        if not getattr(self,'report_range_canvas',None):return
+        try:
+            xmin=float(self.report_view_xmin.get());xmax=float(self.report_view_xmax.get())
+            if not (math.isfinite(xmin) and math.isfinite(xmax) and 0<=xmin<xmax<=self.report_range_duration+.002):
+                raise ValueError('X limits must be within the recording.')
+            y_limits=self.get_report_y_limits()
+        except ValueError as exc:
+            messagebox.showerror('Graph scale',str(exc),parent=self);return
+        ax=self.report_range_axes
+        ax.set_xlim(xmin,xmax)
+        if y_limits:ax.set_ylim(*y_limits)
+        else:ax.relim();ax.autoscale(axis='y')
+        self.report_range_canvas.draw_idle()
+
+    def reset_report_zoom(self):
+        if not getattr(self,'report_range_canvas',None):return
+        self.report_view_xmin.set('0')
+        self.report_view_xmax.set(f'{self.report_range_duration:.3f}')
+        self.report_ymin.set('');self.report_ymax.set('')
+        self.apply_report_scale()
+
+    def get_report_y_limits(self):
+        low=self.report_ymin.get().strip();high=self.report_ymax.get().strip()
+        if not low and not high:return None
+        if not low or not high:raise ValueError('Enter both Y scale limits or clear both.')
+        try:a=float(low);b=float(high)
+        except ValueError:raise ValueError('Y scale limits must be numbers.')
+        if not (math.isfinite(a) and math.isfinite(b) and a<b):
+            raise ValueError('Y minimum must be smaller than Y maximum.')
+        return a,b
 
     def reset_report_and_preview(self):
         self.reset_report_range()
@@ -901,6 +968,11 @@ class App(tk.Tk):
             self.exporting=False
             messagebox.showerror('Time range',str(exc),parent=self);return
         axis_mode=self.report_axis.get()
+        try:y_limits=self.get_report_y_limits()
+        except ValueError as exc:
+            self.exporting=False
+            messagebox.showerror('Graph scale',str(exc),parent=self);return
+        show_events=self.report_events.get();show_grid=self.report_grid.get()
         def work():
             try:
                 if fmt in ('pdf','jpg'):
@@ -908,7 +980,7 @@ class App(tk.Tk):
                     target=Path(path)
                     temp=target.with_name(target.stem+'.partial'+target.suffix)
                     try:
-                        fig=report_figure(self.store,sid,unit,time_range,axis_mode,self.report_events.get(),self.report_grid.get()) if fmt=='pdf' else graph_figure(self.store,sid,unit,time_range,axis_mode,self.report_events.get(),self.report_grid.get())
+                        fig=report_figure(self.store,sid,unit,time_range,axis_mode,show_events,show_grid,y_limits) if fmt=='pdf' else graph_figure(self.store,sid,unit,time_range,axis_mode,show_events,show_grid,y_limits)
                         fig.savefig(temp,format='pdf' if fmt=='pdf' else 'jpeg',dpi=180,facecolor='white')
                         temp.replace(target)
                     finally:temp.unlink(missing_ok=True)
