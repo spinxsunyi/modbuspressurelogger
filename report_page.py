@@ -4,11 +4,20 @@ import math
 import re
 from datetime import datetime
 from matplotlib.figure import Figure
-from matplotlib.ticker import MaxNLocator, FuncFormatter
+from matplotlib.ticker import MaxNLocator, FuncFormatter, AutoMinorLocator
 from exports import stamp
 from units import from_psi
 from app_icon import gauge_image
 import numpy as np
+
+def engineering_grid(ax, visible=True):
+    """Light five-way subdivisions for pressure and time, adapting to zoom/scale."""
+    ax.xaxis.set_minor_locator(AutoMinorLocator(5))
+    ax.yaxis.set_minor_locator(AutoMinorLocator(5))
+    ax.grid(visible=visible, which='major', color='#8d98a3', alpha=.30, linewidth=.8)
+    ax.grid(visible=visible, which='minor', color='#aab4bd', alpha=.16, linewidth=.45)
+    ax.set_axisbelow(True)
+
 
 def report_name(session):
     """Readable, Windows-safe basename shared by PDF, JPEG and detailed exports."""
@@ -102,7 +111,7 @@ def report_figure(store, sid, unit='psi', time_range=None, time_axis='Elapsed Ti
     if y_limits is not None:ax.set_ylim(*y_limits)
     if time_range is not None:ax.set_xlim((time_range[0]-start)/60,(time_range[1]-start)/60)
     ax.xaxis.set_major_locator(MaxNLocator(6))
-    ax.grid(alpha=.22,visible=show_grid)
+    engineering_grid(ax,show_grid)
     ax.tick_params(labelsize=8)
     # The four statistics are computed from the selected interval above, not the full recording.
     # Keep the summary well below the X-axis title and its two-line date/time ticks.
@@ -136,7 +145,7 @@ def report_figure(store, sid, unit='psi', time_range=None, time_axis='Elapsed Ti
             txt(.06,.073,f'{len(events)-5} additional events on the following page(s)',8,color=gray)
     rule(.038)
     txt(.06,.029,'Digital Pressure Recorder v1.0  •  A software by Eka Yudhi Pratama',7,color=gray)
-    txt(.94,.029,f'Page 1 of {1+math.ceil(max(0,len(events)-5)/25)}',7,color=gray,ha='right')
+    txt(.94,.029,f'Page 1 of {2+math.ceil(max(0,len(events)-5)/25)}',7,color=gray,ha='right')
     return fig
 
 def report_figures(store, sid, unit='psi', time_range=None, time_axis='Elapsed Time',
@@ -150,8 +159,6 @@ def report_figures(store, sid, unit='psi', time_range=None, time_axis='Elapsed T
     if time_range is not None:
         lo,hi=time_range
         events=[event for event in events if lo<=event['ts']<=hi]
-    if len(events)<=5:
-        return [first]
 
     navy='#17334c'; teal='#008b92'; gray='#566779'
     pages=[first]
@@ -165,7 +172,7 @@ def report_figures(store, sid, unit='psi', time_range=None, time_axis='Elapsed T
             readings.append(reading['value'] if reading else None)
 
     remainder=events[5:]
-    total=1+math.ceil(len(remainder)/25)
+    total=2+math.ceil(len(remainder)/25)
     for start_index in range(0,len(remainder),25):
         page_number=2+start_index//25
         fig=Figure(figsize=(8.27,11.69),dpi=110,facecolor='white')
@@ -207,7 +214,72 @@ def report_figures(store, sid, unit='psi', time_range=None, time_axis='Elapsed T
         label(.06,.029,'Digital Pressure Recorder v1.0  •  A software by Eka Yudhi Pratama',7,color=gray)
         label(.94,.029,f'Page {page_number} of {total}',7,color=gray,ha='right')
         pages.append(fig)
+    pages.append(full_size_chart_figure(store,sid,unit,time_range,time_axis,show_events,show_grid,y_limits,len(pages)+1))
     return pages
+
+
+def full_size_chart_figure(store, sid, unit='psi', time_range=None,
+                           time_axis='Elapsed Time', show_events=True,
+                           show_grid=True, y_limits=None, page_number=2):
+    """Final PDF page: A4 landscape, shared report branding, maximum chart area."""
+    session=store.get(sid)
+    if not session:
+        raise ValueError('Recording no longer exists')
+    details=json.loads(session['details'])
+    offset=json.loads(session['settings']).get('utc_offset',8)
+    rows=store.plot_rows(sid)
+    events=store.events(sid) if show_events else []
+    if time_range is not None:
+        lo,hi=time_range
+        rows=[r for r in rows if lo<=r['ts']<=hi]
+        events=[e for e in events if lo<=e['ts']<=hi]
+    fig=Figure(figsize=(11.69,8.27),dpi=110,facecolor='white')
+    navy='#17334c';teal='#008b92';gray='#566779'
+    def label(x,y,value,size=9,bold=False,color=navy,**kwargs):
+        fig.text(x,y,str(value),fontsize=size,color=color,
+                 fontweight='bold' if bold else 'normal',va='top',**kwargs)
+    from matplotlib.lines import Line2D
+    def rule(y):
+        fig.add_artist(Line2D([.04,.96],[y,y],transform=fig.transFigure,
+                              color='#c9d3dc',lw=.8))
+    logo=fig.add_axes([.045,.925,.042,.053])
+    logo.imshow(np.asarray(gauge_image(512)),interpolation='lanczos')
+    logo.set_axis_off()
+    label(.10,.969,'Digital Pressure Recorder',18,True)
+    label(.10,.936,'PRESSURE RECORDING REPORT',9,True,color=teal)
+    label(.955,.964,'Version 1.0',8,color=gray,ha='right')
+    rule(.915)
+    heading='  |  '.join(str(details.get(k) or '').strip()
+                        for k in ('well','job') if str(details.get(k) or '').strip())
+    label(.045,.899,'FULL SIZE CHART',12,True)
+    if heading:
+        label(.955,.897,heading[:110],10,True,ha='right')
+    ax=fig.add_axes([.09,.145,.855,.715])
+    start=session['started']
+    ax.plot([(r['ts']-start)/60 for r in rows],
+            [from_psi(r['value'],unit) if r['quality']=='OK' and r['value'] is not None
+             else math.nan for r in rows],color=teal,lw=1.15)
+    for i,event in enumerate(events,1):
+        x=(event['ts']-start)/60
+        ax.axvline(x,color='#bb852c',ls='--',lw=.75,alpha=.8)
+        if i<=30:
+            ax.annotate(str(i),(x,.97),xycoords=('data','axes fraction'),
+                        ha='center',va='top',fontsize=8,color='#925b10')
+    configure_time_axis(ax,start,offset,time_axis)
+    ax.set_ylabel(f'Pressure ({unit})')
+    if y_limits is not None:
+        ax.set_ylim(*y_limits)
+    if time_range is not None:
+        ax.set_xlim((time_range[0]-start)/60,(time_range[1]-start)/60)
+    ax.xaxis.set_major_locator(MaxNLocator(11))
+    ax.yaxis.set_major_locator(MaxNLocator(7))
+    engineering_grid(ax,show_grid)
+    ax.tick_params(labelsize=9)
+    rule(.057)
+    label(.045,.041,'Digital Pressure Recorder v1.0  •  A software by Eka Yudhi Pratama',
+          7,color=gray)
+    label(.955,.041,f'Page {page_number} of {page_number}',7,color=gray,ha='right')
+    return fig
 
 
 def graph_figure(store,sid,unit='psi',time_range=None,time_axis='Elapsed Time',show_events=True,show_grid=True,y_limits=None):
@@ -231,7 +303,7 @@ def graph_figure(store,sid,unit='psi',time_range=None,time_axis='Elapsed Time',s
     ax.set(title=report_name(session),ylabel=f'Pressure ({unit})')
     if y_limits is not None:ax.set_ylim(*y_limits)
     if time_range is not None:ax.set_xlim((time_range[0]-start)/60,(time_range[1]-start)/60)
-    ax.grid(alpha=.2,visible=show_grid);fig.tight_layout()
+    engineering_grid(ax,show_grid);fig.tight_layout()
     return fig
 
 def configure_time_axis(ax,start,offset,mode):
