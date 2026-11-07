@@ -617,12 +617,13 @@ class App(tk.Tk):
 
         # Step 2: combined time interval and graph appearance.
         two=self.report_steps[1]
-        section=ttk.LabelFrame(two,text='Step 2 — Select Interval & Graph Options',padding=14)
-        section.pack(fill='both',expand=True,pady=(0,8))
-        step2_header=ttk.Frame(section)
-        step2_header.pack(fill='x',pady=(0,10))
+        # Keep the next-step action outside the options frame to preserve chart height.
+        step2_header=ttk.Frame(two)
+        step2_header.pack(fill='x',pady=(0,6))
         ttk.Button(step2_header,text='Continue to Preview & Export  >',style='Accent.TButton',
                    command=lambda:self.show_report_step(3)).pack(side='right')
+        section=ttk.LabelFrame(two,text='Step 2 — Select Interval & Graph Options',padding=14)
+        section.pack(fill='both',expand=True,pady=(0,8))
         self.report_start=tk.StringVar(value='0')
         self.report_end=tk.StringVar(value='0')
         self.report_range_mode=tk.StringVar(value='full')
