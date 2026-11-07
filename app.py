@@ -893,7 +893,11 @@ class App(tk.Tk):
             fmt=self.report_format.get()
             self.report_preview_info.set('PDF report preview' if fmt=='pdf' else 'JPEG graph preview' if fmt=='jpg' else 'Detailed recorded data will be exported; graph preview is not applicable.')
             if fmt in ('xlsx','csv'):
-                ttk.Label(self.reporting_preview,text='Detailed data export includes original samples within the selected time range.').pack(padx=24,pady=40)
+                ttk.Label(self.reporting_preview,text='Preview not available',
+                          font=(UI_FONT,15,'bold'),foreground=INK).pack(padx=24,pady=(48,10))
+                ttk.Label(self.reporting_preview,
+                          text='Excel and CSV exports contain detailed data points within the selected interval.',
+                          foreground='#576677').pack(padx=24,pady=(0,48))
                 return
             fig=report_figure(self.store,sid,self.report_unit.get(),time_range,self.report_axis.get(),self.report_events.get(),self.report_grid.get(),y_limits) if fmt=='pdf' else graph_figure(self.store,sid,self.report_unit.get(),time_range,self.report_axis.get(),self.report_events.get(),self.report_grid.get(),y_limits)
             canvas=FigureCanvasTkAgg(fig,master=self.reporting_preview)
