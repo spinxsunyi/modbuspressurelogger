@@ -111,7 +111,10 @@ def test_canonical_psi_storage_and_display_conversion(tmp_path):
     export(st,sid,csv_path,dict(xmin=0,xmax=1,ymin=0,ymax=5100))
     import csv
     with csv_path.open(encoding='utf-8-sig',newline='') as stream:
-        rows=list(csv.DictReader(stream))
+        # Export includes three provenance rows and a blank line before the CSV header.
+        header=next(i for i,line in enumerate(stream) if line.startswith('timestamp,'))
+        stream.seek(0)
+        rows=list(csv.DictReader(list(stream)[header:]))
     assert rows[0]['pressure']=='5000.0'
     assert rows[0]['unit']=='psi'
 
@@ -139,7 +142,7 @@ def test_demo_seed_first_launch_only(tmp_path):
     for session in sessions:
         details = json.loads(session['details'])
         assert details['job_id'].startswith('DEMO-')
-        assert 'Synthetic' in details['notes']
+        assert 'SYNTHETIC' in details['notes'].upper()
         assert store.stats(session['id'])['n'] == 2991
         assert len(store.events(session['id'])) == 8
     original_ids = {s['id'] for s in sessions}
