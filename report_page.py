@@ -15,8 +15,8 @@ def report_name(session):
     local=stamp(session['started'],offset)
     date=local[:10]
     def clean(value):
-        value=re.sub(r'[<>:"/\\\\|?*\\x00-\\x1f]', ' ',str(value or ''))
-        value=re.sub(r'\\s+',' ',value).strip(' .')
+        value=re.sub(r'[<>:"/\\|?*\x00-\x1f]', ' ',str(value or ''))
+        value=re.sub(r'\s+',' ',value).strip(' .')
         return value[:90].rstrip(' .')
     fields=[clean(details.get(key)) for key in ('well','job')]
     fields=[value for value in fields if value]
