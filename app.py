@@ -945,6 +945,11 @@ class App(tk.Tk):
         self.show('Reporting')
 
     def refresh_reporting(self):
+        if hasattr(self,'report_resolution_row'):
+            if self.report_format.get() in ('xlsx','csv'):
+                self.report_resolution_row.pack(fill='x',pady=(0,8),before=self.reporting_preview.master)
+            else:
+                self.report_resolution_row.pack_forget()
         sid=getattr(self,'reporting_sid',None)
         session=self.store.get(sid) if sid else None
         if not session:
