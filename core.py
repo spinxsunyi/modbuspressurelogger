@@ -149,7 +149,7 @@ class Store:
 class Engine(threading.Thread):
     def __init__(self,store):
         super().__init__(daemon=True); self.store=store; self.commands=queue.Queue(); self.messages=queue.Queue()
-        self.source=None; self.sid=None; self.settings=dict(DEFAULTS); self.running=True; self.deadline=0; self.origin=0
+        self.source=None; self.sid=None; self.settings=dict(DEFAULTS); self.running=True; self.deadline=0; self.origin=0; self.generation=0; self.last_error=None
     def send(self,cmd,*args): self.commands.put((cmd,args))
     def emit(self,kind,**data): self.messages.put((kind,data))
     def run(self):
@@ -160,17 +160,23 @@ class Engine(threading.Thread):
             except queue.Empty: pass
             except Exception as e: self.emit('error',text=str(e))
             if self.running and self.source and time.monotonic()>=self.deadline: self.poll()
-        if self.source: self.source.close()
+        if self.source:
+            try: self.source.close()
+            except Exception as exc: self.emit('error',text=str(exc))
     def command(self,cmd,*args):
         if cmd=='connect':
             if self.sid: raise RuntimeError('Stop recording before changing connection')
             if self.source: self.source.close()
+            self.source=None
+            self.generation=args[1] if len(args)>1 else self.generation+1
+            self.last_error=None
             self.settings=dict(args[0]); self.source=Simulator(self.settings) if self.settings['mode']=='Simulation' else ModbusSource(self.settings)
-            self.deadline=time.monotonic(); self.origin=self.deadline; self.emit('connected',settings=self.settings)
+            self.deadline=time.monotonic(); self.origin=self.deadline
+            self.emit('connected',settings=self.settings,generation=self.generation)
         elif cmd=='disconnect':
             if self.sid: raise RuntimeError('Stop recording first')
             if self.source: self.source.close()
-            self.source=None; self.emit('disconnected')
+            self.source=None; self.generation+=1; self.emit('disconnected',generation=self.generation)
         elif cmd=='start':
             if not self.source or self.sid: raise RuntimeError('Connect first; only one recording can run')
             self.sid=self.store.start(self.settings); self.origin=time.monotonic(); self.emit('started',sid=self.sid)
@@ -185,7 +191,13 @@ class Engine(threading.Thread):
     def poll(self):
         began=time.monotonic()
         try: value,quality,raw,status=self.source.read()
-        except Exception as e: value,quality,raw,status=None,'TIMEOUT',None,None
+        except Exception as e:
+            value,quality,raw,status=None,'TIMEOUT',None,None
+            error=str(e)
+            if error!=self.last_error:self.emit('communication_error',text=error,generation=self.generation)
+            self.last_error=error
+        else:
+            self.last_error=None
         sample=dict(ts=time.time(),elapsed=time.monotonic()-self.origin,value=value,quality=quality,raw=raw,status=status,latency=time.monotonic()-began)
         if self.sid:
             try: self.store.add_sample(self.sid,sample)
@@ -194,6 +206,6 @@ class Engine(threading.Thread):
                 try: self.store.finish(sid,'Storage error')
                 except Exception: pass
                 self.emit('storage_error',text=str(e),sid=sid)
-        self.emit('sample',sample=sample,sid=self.sid)
+        self.emit('sample',sample=sample,sid=self.sid,generation=self.generation)
         step=float(self.settings['interval']); self.deadline+=step
         if self.deadline<time.monotonic(): self.deadline=time.monotonic()+step
