@@ -10,7 +10,7 @@ from core import DEFAULTS,FIELDS,Store,Engine
 from units import from_psi,to_psi
 from instance import InstanceLock
 from exports import export,stamp
-from report_page import report_figure,graph_figure,report_name
+from report_page import report_figure,report_figures,graph_figure,report_name
 from app_icon import set_window_icon
 
 UI_FONT='Segoe UI' if os.name=='nt' else 'Helvetica'
@@ -1338,8 +1338,17 @@ class App(tk.Tk):
                     target=Path(path)
                     temp=target.with_name(target.stem+'.partial'+target.suffix)
                     try:
-                        fig=report_figure(self.store,sid,unit,time_range,axis_mode,show_events,show_grid,y_limits) if fmt=='pdf' else graph_figure(self.store,sid,unit,time_range,axis_mode,show_events,show_grid,y_limits)
-                        fig.savefig(temp,format='pdf' if fmt=='pdf' else 'jpeg',dpi=180,facecolor='white')
+                        if fmt=='pdf':
+                            from matplotlib.backends.backend_pdf import PdfPages
+                            pages=report_figures(self.store,sid,unit,time_range,axis_mode,
+                                                 show_events,show_grid,y_limits)
+                            with PdfPages(temp) as pdf:
+                                for page in pages:
+                                    pdf.savefig(page,dpi=180,facecolor='white')
+                        else:
+                            fig=graph_figure(self.store,sid,unit,time_range,axis_mode,
+                                             show_events,show_grid,y_limits)
+                            fig.savefig(temp,format='jpeg',dpi=180,facecolor='white')
                         temp.replace(target)
                     finally:temp.unlink(missing_ok=True)
                 else:
