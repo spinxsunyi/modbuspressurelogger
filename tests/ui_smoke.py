@@ -47,6 +47,15 @@ try:
     a.engine.send('drop',False);pump(.7);assert a.latest['quality']=='OK'
     a.show('History');pump(.3);assert a.sid==sid
     a.show('Settings');pump(.3);assert a.sid==sid
+    # Settings must remain scrollable at the supported minimum window size.
+    a.geometry('820x560');pump(.3)
+    assert a.settings_canvas.winfo_ismapped()
+    assert a.settings_canvas.cget('yscrollcommand')
+    assert float(a.settings_canvas.cget('height')) >= 0
+    a.settings_canvas.yview_moveto(1)
+    pump(.1)
+    assert a.settings_canvas.yview()[1] > 0.95
+    a.geometry('1280x820');pump(.3)
     a.show('Live Monitor');a.record();pump(.4);assert not a.sid
     a.load_viewer(sid);pump(.4);a.history_window.set('1 min');a.slide_history(0);a.history_labels.set(False);a.paint_viewer();a.history_labels.set(True);a.view_vars['ymax'].set('3000');a.apply_view();a.capture_view();pump(.2)
     assert a.store.get(sid)['state']=='Completed'
