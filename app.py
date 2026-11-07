@@ -694,6 +694,15 @@ class App(tk.Tk):
                    command=self.apply_report_scale).pack(side='left',padx=(0,8))
         ttk.Button(actions,text='Reset Zoom',style='Compact.TButton',
                    command=self.reset_report_zoom).pack(side='left')
+        self.report_pan_mode=tk.BooleanVar(value=False)
+        self.report_pan_button=tk.Canvas(actions,width=30,height=30,bg='#edf3f6',
+            highlightthickness=1,highlightbackground='#9aa9b2',cursor='hand2')
+        self.report_pan_button.pack(side='left',padx=(14,5))
+        self.report_pan_button.bind('<Button-1>',lambda event:self.toggle_report_pan())
+        self.report_pan_text=ttk.Label(actions,text='Pan (off)',cursor='hand2')
+        self.report_pan_text.pack(side='left')
+        self.report_pan_text.bind('<Button-1>',lambda event:self.toggle_report_pan())
+        self.draw_report_pan_icon()
         self.report_drag_hint=ttk.Label(section,
             text='Drag to select a reporting interval. Mouse wheel zooms the view without changing the selected interval.',
             foreground='#576677')
@@ -897,6 +906,27 @@ class App(tk.Tk):
         except Exception as exc:
             ttk.Label(self.reporting_preview,text='Preview unavailable: '+str(exc)).pack(pady=30)
 
+    def draw_report_pan_icon(self):
+        c=self.report_pan_button;c.delete('all')
+        active=self.report_pan_mode.get()
+        color='white' if active else '#17334c'
+        c.configure(bg=TEAL if active else '#edf3f6')
+        c.create_line(15,4,15,26,fill=color,width=2)
+        c.create_line(4,15,26,15,fill=color,width=2)
+        for points in ((15,3,11,9,19,9),(15,27,11,21,19,21),
+                       (3,15,9,11,9,19),(27,15,21,11,21,19)):
+            c.create_polygon(*points,fill=color,outline=color)
+        self.report_pan_text.configure(text='Pan (on)' if active else 'Pan (off)')
+
+    def toggle_report_pan(self):
+        self.report_pan_mode.set(not self.report_pan_mode.get())
+        self.draw_report_pan_icon()
+        if getattr(self,'report_range_canvas',None):
+            self.report_range_selector.set_active(
+                not self.report_pan_mode.get() and self.report_range_mode.get()=='custom')
+            self.report_range_canvas.get_tk_widget().configure(
+                cursor='fleur' if self.report_pan_mode.get() else '')
+
     def change_report_range_mode(self):
         custom=self.report_range_mode.get()=='custom'
         if not custom and getattr(self,'report_range_sid',None):
@@ -911,7 +941,7 @@ class App(tk.Tk):
             else:
                 self.report_drag_hint.pack_forget()
         if getattr(self,'report_range_canvas',None):
-            self.report_range_selector.set_active(custom)
+            self.report_range_selector.set_active(custom and not self.report_pan_mode.get())
             self.report_range_shade.set_visible(custom)
             self.report_excluded_left.set_visible(custom)
             self.report_excluded_right.set_visible(custom)
@@ -996,6 +1026,27 @@ class App(tk.Tk):
             ax.set_xlim(center-span/2,center+span/2)
             self.set_report_x_view_fields(*ax.get_xlim())
             canvas.draw_idle()
+        pan_state={'origin':None}
+        def pan_press(event):
+            if not self.report_pan_mode.get() or event.inaxes is not ax or event.button!=1:return
+            pan_state['origin']=(event.x,event.y,ax.get_xlim(),ax.get_ylim())
+        def pan_move(event):
+            if not self.report_pan_mode.get() or pan_state['origin'] is None:return
+            x0,y0,(xmin,xmax),(ymin,ymax)=pan_state['origin']
+            dx=(event.x-x0)*(xmax-xmin)/max(1,ax.bbox.width)
+            dy=(event.y-y0)*(ymax-ymin)/max(1,ax.bbox.height)
+            width=xmax-xmin
+            left=max(0,min(duration-width,xmin-dx))
+            ax.set_xlim(left,left+width)
+            ax.set_ylim(ymin-dy,ymax-dy)
+            self.set_report_x_view_fields(*ax.get_xlim())
+            self.report_ymin.set(f'{ax.get_ylim()[0]:.3f}')
+            self.report_ymax.set(f'{ax.get_ylim()[1]:.3f}')
+            canvas.draw_idle()
+        def pan_release(event):pan_state['origin']=None
+        canvas.mpl_connect('button_press_event',pan_press)
+        canvas.mpl_connect('motion_notify_event',pan_move)
+        canvas.mpl_connect('button_release_event',pan_release)
         canvas.mpl_connect('scroll_event',wheel)
         self.report_range_canvas=canvas
         self.report_inline_sid=sid
