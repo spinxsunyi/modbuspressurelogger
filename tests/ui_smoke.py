@@ -47,7 +47,16 @@ try:
     assert a.event_btn.cget('style')=='Compact.TButton'
     assert a.live_chart_tools.winfo_manager()=='pack'
     assert a.history_slider.winfo_class()=='TScrollbar'
-    a.live_slider.on_scroll('moveto','0')
+    # A scrollbar spanning the full short buffer cannot move; create a
+    # narrower viewport before asserting that a genuine drag disables Follow.
+    samples=list(a.buffer)
+    assert len(samples)>2
+    first,last=samples[0]['ts'],samples[-1]['ts']
+    a.lax.set_xlim(first,first+(last-first)*.5)
+    a.live_slider.show_range(samples,*a.lax.get_xlim(),a.settings['utc_offset'])
+    a.follow.set(True)
+    a.live_slider.on_scroll('moveto','0.4')
+    pump(.1)  # TimeScrollbar dispatches movements via after(16).
     assert not a.follow.get()
     a.follow.set(True)
     a.show_live_options();pump(.1)
@@ -138,7 +147,7 @@ try:
     assert a.vax.get_xlabel()=='Elapsed time (mm:ss)'
     assert a.vax.xaxis.get_major_formatter()(1.5,0)=='01:30'
     a.viewer_time_display.set('Date & time');a.paint_viewer()
-    assert a.vax.get_xlabel()=='Date & time'
+    assert 'UTC' in a.vax.get_xlabel()  # Date is now shown once below the axis.
     a.viewer_scale_mode.set('Auto');a.select_viewer_scale()
     a.viewer_scale_mode.set('Manual');a.select_viewer_scale()
     a.show_viewer_scale_options();pump(.1)
@@ -172,5 +181,23 @@ try:
     assert not a.engine.is_alive(), 'Acquisition worker remained active after shutdown'
     print('UI SMOKE PASS: launch, connect, record, autosave, event, disconnect/recover, navigation, stop, viewer, close')
 finally:
-    if a.engine.is_alive():a.engine.send('quit');a.engine.join(3)
-    tmp.cleanup()
+    # Always close the GUI and release the Windows instance lock before
+    # TemporaryDirectory removes the files, even if an assertion failed.
+    try:
+        if not a._shutdown_complete:
+            a.close()
+            deadline=time.monotonic()+5
+            while not a._shutdown_complete and time.monotonic()<deadline:
+                try:a.update()
+                except Exception:break
+                time.sleep(.02)
+        if a.engine.is_alive():
+            a.engine.send('quit')
+            a.engine.join(3)
+        if not a._shutdown_complete:
+            try:a.instance_lock.close()
+            except Exception:pass
+            try:a.destroy()
+            except Exception:pass
+    finally:
+        tmp.cleanup()
