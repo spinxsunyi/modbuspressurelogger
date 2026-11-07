@@ -24,24 +24,38 @@ BASE=Path(sys.executable).parent if getattr(sys,'frozen',False) else Path(__file
 DATA=Path(os.environ.get('PMS_LOGGER_DATA',str(BASE/'data')))
 
 class TimeScrollbar(ttk.Scrollbar):
-    """Standard horizontal time scrollbar; compatible with timeline navigation."""
+    """Native-feeling time scrollbar: update the thumb before chart rendering."""
     def __init__(self,parent,move):
         super().__init__(parent,orient='horizontal',command=self.on_scroll)
         self.move=move
         self.percent=100.0
         self.fraction=1.0
+        self._pending=None
+        self._target=None
 
     def on_scroll(self,*args):
         span=max(0.0,1.0-self.fraction)
+        if span<=1e-9:return
         start=self.percent/100.0*span
         if args[0]=='moveto':
             start=float(args[1])
         elif args[0]=='scroll':
-            increment=(self.fraction*.15 if self.fraction<1 else .05)
+            increment=max(.002,self.fraction*.15)
             start+=int(args[1])*increment*({'pages':5,'units':1}.get(args[2],1))
         start=max(0.0,min(span,start))
-        self.percent=100*start/span if span>0 else 100.0
-        self.move(self.percent)
+        self.percent=100*start/span
+        # Move the native thumb immediately; defer expensive Matplotlib work.
+        super().set(start,min(1.0,start+self.fraction))
+        self._target=self.percent
+        if self._pending is None:
+            self._pending=self.after(16,self._flush)
+
+    def _flush(self):
+        self._pending=None
+        target=self._target
+        self._target=None
+        if target is not None and self.winfo_exists():
+            self.move(target)
 
     def get(self):
         return self.percent
@@ -58,6 +72,9 @@ class TimeScrollbar(ttk.Scrollbar):
         end=max(start,min(1.0,(right-first)/duration))
         self.fraction=max(0.0,min(1.0,end-start))
         span=max(0.0,1.0-self.fraction)
+        # During dragging, do not snap the thumb back to a delayed plot position.
+        if self._pending is not None or self._target is not None:
+            return
         self.percent=100*min(span,start)/span if span>0 else 100.0
         super().set(start,end)
 
@@ -915,7 +932,6 @@ class App(tk.Tk):
         lo,hi=self.buffer[0]['ts'],self.buffer[-1]['ts']; width=min(self.window_seconds(self.window.get()),max(hi-lo,1))
         start=lo+max(0,hi-lo-width)*float(value)/100
         self.follow.set(False);self.lax.set_xlim(start,start+width)
-        rows=list(self.buffer);self.line.set_data([r['ts'] for r in rows],[r['value'] if r['quality']=='OK' else math.nan for r in rows])
         self.lcanvas.draw_idle()
 
     def slide_history(self,value):
@@ -923,7 +939,9 @@ class App(tk.Tk):
         duration=max((self.vrows[-1]['ts']-self.vsession['started'])/60,.01)
         width=min(duration,self.window_seconds(self.history_window.get())/60)
         start=max(0,duration-width)*float(value)/100
-        self.view_vars['xmin'].set(str(start));self.view_vars['xmax'].set(str(start+width));self.paint_viewer()
+        self.view_vars['xmin'].set(str(start));self.view_vars['xmax'].set(str(start+width))
+        self.vax.set_xlim(start,start+width)
+        self.vcanvas.draw_idle()
 
     def hover(self,event,history):
         ax=self.vax if history else self.lax;canvas=self.vcanvas if history else self.lcanvas
