@@ -10,6 +10,7 @@ from core import DEFAULTS,FIELDS,Store,Engine
 from units import from_psi,to_psi
 from instance import InstanceLock
 from exports import export,stamp
+from report_page import report_figure,graph_figure
 from app_icon import set_window_icon
 
 UI_FONT='Segoe UI' if os.name=='nt' else 'Helvetica'
@@ -536,29 +537,38 @@ class App(tk.Tk):
 
     def make_reporting(self):
         p=self.pages['Reporting']
-        header=ttk.Frame(p);header.pack(fill='x',pady=(0,12))
-        ttk.Label(header,text='Reporting',style='Title.TLabel').pack(side='left')
-        ttk.Button(header,text='Select from History',style='Compact.TButton',
+        bar=ttk.Frame(p);bar.pack(fill='x',pady=(0,8))
+        ttk.Label(bar,text='Reporting',style='Title.TLabel').pack(side='left')
+        ttk.Button(bar,text='Select from History',style='Compact.TButton',
                    command=lambda:self.show('History')).pack(side='right')
         self.reporting_record=tk.StringVar(value='No recording selected')
-        ttk.Label(p,textvariable=self.reporting_record,font=(UI_FONT,14,'bold')).pack(anchor='w',pady=(0,10))
-        ttk.Label(p,text='Selected recording',foreground='#576677').pack(anchor='w')
-        self.reporting_info=ttk.Label(p,text='Select a recording from History or Viewer to begin.',
-                                      justify='left',font=(UI_FONT,11))
-        self.reporting_info.pack(anchor='w',pady=(8,20))
-        ttk.Separator(p).pack(fill='x',pady=(0,16))
-        ttk.Label(p,text='Report preparation workspace',font=(UI_FONT,13,'bold')).pack(anchor='w')
-        ttk.Label(p,text='This page is ready for the next iteration: report configuration, preview, and export. '
-                  'No report has been generated yet.',foreground='#576677',wraplength=950).pack(anchor='w',pady=(10,14))
-        ttk.Button(p,text='Review selected recording',style='Compact.TButton',
-                   command=self.review_reporting_record).pack(anchor='w')
+        ttk.Label(p,textvariable=self.reporting_record,font=(UI_FONT,12,'bold')).pack(anchor='w',pady=(0,6))
+        actions=ttk.Frame(p);actions.pack(fill='x',pady=(0,8))
+        ttk.Label(actions,text='Export:').pack(side='left',padx=(0,10))
+        for label,fmt in [('PDF Report','pdf'),('JPEG Graph','jpg'),('Excel — Detailed Data','xlsx'),('CSV — Detailed Data','csv')]:
+            ttk.Button(actions,text=label,style='Compact.TButton',
+                       command=lambda f=fmt:self.export_reporting(f)).pack(side='left',padx=(0,8))
+        ttk.Label(p,text='Single-page PDF preview • Excel and CSV export every recorded sample (not just plotted points).',
+                  foreground='#576677').pack(anchor='w',pady=(0,6))
+        area=ttk.Frame(p);area.pack(fill='both',expand=True)
+        self.reporting_canvas=tk.Canvas(area,bg='#e2e8ed',highlightthickness=0)
+        scroll=ttk.Scrollbar(area,orient='vertical',command=self.reporting_canvas.yview)
+        scroll.pack(side='right',fill='y')
+        self.reporting_canvas.pack(side='left',fill='both',expand=True)
+        self.reporting_canvas.configure(yscrollcommand=scroll.set)
+        self.reporting_preview=ttk.Frame(self.reporting_canvas)
+        self.reporting_window=self.reporting_canvas.create_window((0,0),window=self.reporting_preview,anchor='n')
+        self.reporting_preview.bind('<Configure>',lambda e:self.reporting_canvas.configure(scrollregion=self.reporting_canvas.bbox('all')))
+        self.reporting_canvas.bind('<Configure>',lambda e:self.reporting_canvas.coords(self.reporting_window,e.width/2,0))
+        self.reporting_placeholder=ttk.Label(self.reporting_preview,text='Select a recording from History or Viewer to preview its report.')
+        self.reporting_placeholder.pack(pady=40)
+        self.reporting_preview_sid=None
 
     def open_reporting(self,sid):
         if not sid or not self.store.get(sid):
             messagebox.showwarning('Reporting','Please select a valid recording.',parent=self)
             return
         self.reporting_sid=sid
-        self.refresh_reporting()
         self.show('Reporting')
 
     def refresh_reporting(self):
@@ -567,21 +577,59 @@ class App(tk.Tk):
         if not session:
             self.reporting_sid=None
             self.reporting_record.set('No recording selected')
-            self.reporting_info.configure(text='Select a recording from History or Viewer to begin.')
             return
         details=json.loads(session['details'])
         self.reporting_record.set((details.get('well') or session['name'])+'  |  '+(details.get('job') or 'Recording'))
-        self.reporting_info.configure(text='Record ID: '+session['id']+'\n'
-            +'Engineer: '+(details.get('engineer') or '—')+'\n'
-            +'Source: '+session['mode']+'\n'
-            +'Status: '+session['state'])
+        # Recreate on each visit so edits to notes/events are reflected.
+        for child in self.reporting_preview.winfo_children():child.destroy()
+        try:
+            fig=report_figure(self.store,sid,self.settings['unit'])
+            canvas=FigureCanvasTkAgg(fig,master=self.reporting_preview)
+            widget=canvas.get_tk_widget()
+            widget.pack(padx=12,pady=12)
+            canvas.draw()
+            self.reporting_figure=fig
+            self.reporting_figure_canvas=canvas
+        except Exception as exc:
+            ttk.Label(self.reporting_preview,text='Preview unavailable: '+str(exc)).pack(pady=30)
+
+    def export_reporting(self,fmt):
+        sid=getattr(self,'reporting_sid',None)
+        session=self.store.get(sid) if sid else None
+        if not session:
+            messagebox.showwarning('Reporting','Select a recording first.',parent=self);return
+        if self.exporting:
+            messagebox.showinfo('Export','Wait for the current export to finish.',parent=self);return
+        suffix='jpg' if fmt=='jpg' else fmt
+        path=filedialog.asksaveasfilename(parent=self,defaultextension='.'+suffix,
+            initialfile=session['name']+('_graph' if fmt=='jpg' else '_report' if fmt=='pdf' else '_data')+'.'+suffix,
+            filetypes=[('PDF report','*.pdf')] if fmt=='pdf' else [('JPEG image','*.jpg')] if fmt=='jpg' else [('Excel workbook','*.xlsx')] if fmt=='xlsx' else [('CSV data','*.csv')])
+        if not path:return
+        self.exporting=True
+        self.footer.config(text='Exporting '+fmt.upper()+'...')
+        unit=self.settings['unit']
+        def work():
+            try:
+                if fmt in ('pdf','jpg'):
+                    from pathlib import Path
+                    target=Path(path)
+                    temp=target.with_name(target.stem+'.partial'+target.suffix)
+                    try:
+                        fig=report_figure(self.store,sid,unit) if fmt=='pdf' else graph_figure(self.store,sid,unit)
+                        fig.savefig(temp,format='pdf' if fmt=='pdf' else 'jpeg',dpi=180,facecolor='white')
+                        temp.replace(target)
+                    finally:temp.unlink(missing_ok=True)
+                else:
+                    export(self.store,sid,path,{},False)
+                self.engine.emit('exported',path=path)
+            except Exception as exc:
+                self.engine.emit('export_error',text='Export failed: '+str(exc))
+        threading.Thread(target=work,daemon=True).start()
 
     def review_reporting_record(self):
         sid=getattr(self,'reporting_sid',None)
-        if sid and self.store.get(sid):
-            self.load_viewer(sid)
-        else:
-            self.show('History')
+        if sid and self.store.get(sid):self.load_viewer(sid)
+        else:self.show('History')
 
     def make_settings(self):
         # Keep every setting reachable when the window is narrow or display scaling is high.
