@@ -148,6 +148,7 @@ class App(tk.Tk):
         def reset():
             if live:
                 self.live_auto.set(True)
+                self.scale_mode.set('Auto')
                 self.follow.set(True)
                 self.lax.set_autoscaley_on(True)
             else:
@@ -207,7 +208,10 @@ class App(tk.Tk):
         self.window=tk.StringVar(value='5 min')
         ttk.Combobox(toolbar,textvariable=self.window,values=['1 min','5 min','10 min','15 min','30 min','1 hour','Buffer data'],state='readonly',width=9).pack(side='left',padx=(0,5))
         ttk.Button(toolbar,text='Go to Live',style='Compact.TButton',command=lambda:self.follow.set(True)).pack(side='left')
-        ttk.Button(toolbar,text='Chart options',style='Compact.TButton',command=self.show_live_options).pack(side='left',padx=(6,0))
+        self.scale_mode=tk.StringVar(value='Auto')
+        ttk.Radiobutton(toolbar,text='Auto scale',value='Auto',variable=self.scale_mode,command=self.select_live_scale).pack(side='left',padx=(10,0))
+        ttk.Radiobutton(toolbar,text='Manual scale',value='Manual',variable=self.scale_mode,command=self.select_live_scale).pack(side='left',padx=(5,0))
+        ttk.Button(toolbar,text='Manual scale options',style='Compact.TButton',command=self.show_live_options).pack(side='left',padx=(8,0))
         ttk.Button(top,text='Details +/−',style='Compact.TButton',command=self.toggle_details).pack(side='right',padx=10)
         self.lfig,self.lax,self.lcanvas=self.plot(main); self.lax.set(xlabel='Time',ylabel='Pressure'); self.lax.grid(alpha=.2)
         self.line,=self.lax.plot([],[],color='#008b92',lw=1.2)
@@ -554,16 +558,6 @@ class App(tk.Tk):
         self.bind('<Configure>', self.adapt_width, add='+')
         self.live_min=tk.StringVar(value='0');self.live_max=tk.StringVar(value='3000');self.live_auto=tk.BooleanVar(value=True)
         self.live_labels=tk.BooleanVar(value=True)
-        # Manual limits and Auto scale are always visible, directly above the graph.
-        scale_bar=ttk.Frame(self.lcanvas.get_tk_widget().master)
-        scale_bar.pack(before=self.lcanvas.get_tk_widget(),fill='x',pady=(0,3))
-        ttk.Label(scale_bar,text='Pressure min').pack(side='left')
-        ttk.Entry(scale_bar,textvariable=self.live_min,width=8).pack(side='left',padx=(4,10))
-        ttk.Label(scale_bar,text='Pressure max').pack(side='left')
-        ttk.Entry(scale_bar,textvariable=self.live_max,width=8).pack(side='left',padx=(4,8))
-        ttk.Button(scale_bar,text='Apply',style='Compact.TButton',command=self.apply_live_scale).pack(side='left')
-        ttk.Checkbutton(scale_bar,text='Auto scale',variable=self.live_auto,
-                        command=self.toggle_live_auto_scale).pack(side='left',padx=(12,0))
         self.live_slider=TimeScrollbar(self.lcanvas.get_tk_widget().master,self.slide_live)
         self.live_slider.pack(after=self.lcanvas.get_tk_widget(),fill='x')
         self.live_events=ttk.Treeview(self.lcanvas.get_tk_widget().master,columns=('time','event'),show='headings',height=2)
@@ -670,29 +664,48 @@ class App(tk.Tk):
             self.live_options.lift()
             return
         win=tk.Toplevel(self)
-        win.title('Chart options')
+        win.title('Manual scale options')
         win.transient(self)
         win.resizable(False,False)
         self.live_options=win
-        body=ttk.Frame(win,padding=16);body.pack(fill='both',expand=True)
-        ttk.Label(body,text='Display',font=(UI_FONT,10,'bold')).pack(anchor='w',pady=(0,8))
+        body=ttk.Frame(win,padding=14);body.pack(fill='both',expand=True)
+        for row,(label,var) in enumerate((('Pressure min',self.live_min),('Pressure max',self.live_max))):
+            ttk.Label(body,text=label).grid(row=row,column=0,sticky='w',padx=(0,10),pady=5)
+            ttk.Entry(body,textvariable=var,width=14).grid(row=row,column=1,sticky='ew',pady=5)
         ttk.Checkbutton(body,text='Show event labels',variable=self.live_labels,
-                        command=self.paint_live_events).pack(anchor='w',pady=(0,10))
-        ttk.Button(body,text='Close',style='Compact.TButton',command=win.destroy).pack(anchor='e')
+                        command=self.paint_live_events).grid(row=2,column=0,columnspan=2,sticky='w',pady=(10,6))
+        ttk.Button(body,text='Apply manual scale',style='Compact.TButton',
+                   command=self.apply_live_scale).grid(row=3,column=0,columnspan=2,sticky='ew',pady=(8,3))
+        ttk.Button(body,text='Close',style='Compact.TButton',command=win.destroy).grid(row=4,column=0,columnspan=2,sticky='ew')
+
+    def select_live_scale(self):
+        self.live_auto.set(self.scale_mode.get()=='Auto')
+        self.toggle_live_auto_scale()
 
     def toggle_live_auto_scale(self):
+        self.scale_mode.set('Auto' if self.live_auto.get() else 'Manual')
         self.lax.set_autoscaley_on(self.live_auto.get())
         if self.live_auto.get():
             self.lax.relim()
             self.lax.autoscale_view(scaley=True)
+        else:
+            try:
+                lo,hi=float(self.live_min.get()),float(self.live_max.get())
+                if math.isfinite(lo) and math.isfinite(hi) and lo<hi:self.lax.set_ylim(lo,hi)
+            except ValueError:pass
         self.lcanvas.draw_idle()
 
     def apply_live_scale(self):
         try:
             lo,hi=float(self.live_min.get()),float(self.live_max.get())
-            if not math.isfinite(lo) or not math.isfinite(hi) or lo>=hi:raise ValueError('Minimum must be less than maximum; use finite numbers.')
-            self.live_auto.set(False);self.lax.set_ylim(lo,hi);self.lcanvas.draw_idle()
-        except ValueError as exc:messagebox.showerror('Pressure scale',str(exc))
+            if not math.isfinite(lo) or not math.isfinite(hi) or lo>=hi:
+                raise ValueError('Minimum must be less than maximum; use finite numbers.')
+            self.live_auto.set(False)
+            self.scale_mode.set('Manual')
+            self.lax.set_ylim(lo,hi)
+            self.lcanvas.draw_idle()
+        except ValueError as exc:
+            messagebox.showerror('Pressure scale',str(exc))
 
     def window_seconds(self,name):
         return {'1 min':60,'5 min':300,'10 min':600,'15 min':900,'30 min':1800,'1 hour':3600,'Buffer data':float('inf')}[name]
