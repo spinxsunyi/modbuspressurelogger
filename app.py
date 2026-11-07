@@ -2112,8 +2112,17 @@ class App(tk.Tk):
         if self.page=='Live Monitor' and self.buffer and time.monotonic()-self.last_plot>.5:
             self.last_plot=time.monotonic(); rows=list(self.buffer); end=rows[-1]['ts']; seconds={'1 min':60,'5 min':300,'10 min':600,'15 min':900,'30 min':1800,'1 hour':3600,'Buffer data':1e20}[self.window.get()]
             rows=[r for r in rows if r['ts']>=end-seconds] if self.follow.get() else rows
-            from matplotlib.ticker import FuncFormatter, MaxNLocator
-            self.lax.xaxis.set_major_locator(MaxNLocator(nbins=5, min_n_ticks=2))
+            from matplotlib.ticker import FuncFormatter, MaxNLocator, MultipleLocator, AutoMinorLocator
+            # Fixed engineering-chart time divisions (seconds), independent of data count.
+            time_grid={'1 min':(10,2),'5 min':(60,12),'10 min':(120,30),
+                       '15 min':(180,30),'30 min':(300,60),'1 hour':(600,120)}
+            if self.window.get() in time_grid:
+                major,minor=time_grid[self.window.get()]
+                self.lax.xaxis.set_major_locator(MultipleLocator(major))
+                self.lax.xaxis.set_minor_locator(MultipleLocator(minor))
+            else:
+                self.lax.xaxis.set_major_locator(MaxNLocator(nbins=5,min_n_ticks=2))
+                self.lax.xaxis.set_minor_locator(AutoMinorLocator(5))
             self.line.set_data([r['ts'] for r in rows],[r['value'] if r['quality']=='OK' else math.nan for r in rows]);self.lax.set_ylabel('Pressure ('+self.settings['unit']+')');self.lax.yaxis.set_major_formatter(FuncFormatter(lambda p,pos:f'{from_psi(p,self.settings["unit"]):,.1f}'))
             self.lax.xaxis.set_major_formatter(FuncFormatter(lambda x,pos:stamp(x,self.settings['utc_offset'])[11:19]))
             self.lax.tick_params(axis='x',labelrotation=0)
