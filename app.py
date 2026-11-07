@@ -553,8 +553,12 @@ class App(tk.Tk):
         one=self.report_steps[0]
         choose=ttk.LabelFrame(one,text='Step 1 — Select Record',padding=18)
         choose.pack(fill='x',pady=(0,12))
-        ttk.Label(choose,text='Select a record from History to prepare a pressure report.',
-                  foreground='#576677').pack(anchor='w',pady=(0,12))
+        header=ttk.Frame(choose);header.pack(fill='x',pady=(0,12))
+        ttk.Label(header,text='Select a record from History to prepare a pressure report.',
+                  foreground='#576677').pack(side='left')
+        self.report_continue_record=ttk.Button(header,text='Continue to Select Interval  >',
+                   style='Accent.TButton',command=lambda:self.show_report_step(2))
+        self.report_continue_record.pack(side='right')
         selection=ttk.Frame(choose);selection.pack(fill='x')
         ttk.Label(selection,textvariable=self.reporting_record,font=(UI_FONT,12,'bold')).pack(side='left',padx=(0,18))
         self.report_history_button=ttk.Button(selection,text='Select from History  ▾',
@@ -590,14 +594,12 @@ class App(tk.Tk):
         hscroll.grid(row=1,column=0,sticky='ew')
         self.report_history_tree.tag_configure('alternate',background='#edf4f6')
         self.report_history_tree.bind('<<TreeviewSelect>>',self.choose_report_history_record)
-        self.report_history_tree.bind('<Double-1>',self.choose_report_history_record)
+        self.report_history_tree.bind('<Double-1>',self.confirm_report_history_record)
         self.report_history_count=ttk.Label(self.report_history_panel,text='',foreground='#576677')
         self.report_history_count.pack(anchor='w',pady=(6,0))
         self.report_record_status=tk.StringVar(value='')
         ttk.Label(choose,textvariable=self.report_record_status,foreground='#576677').pack(anchor='w',pady=(12,0))
-        self.report_continue_record=ttk.Button(one,text='Continue to Select Interval  >',
-                   style='Accent.TButton',command=lambda:self.show_report_step(2))
-        self.report_continue_record.pack(anchor='e')
+
 
         # Step 2: combined time interval and graph appearance.
         two=self.report_steps[1]
@@ -750,6 +752,16 @@ class App(tk.Tk):
             self.report_range_canvas=None
             self.refresh_reporting()
         self.report_continue_record.configure(state='normal')
+    def confirm_report_history_record(self,event=None):
+        # A double-click selects the row and immediately advances to Step 2.
+        if event is not None:
+            row=self.report_history_tree.identify_row(event.y)
+            if not row:return
+            self.report_history_tree.selection_set(row)
+        self.choose_report_history_record()
+        if getattr(self,'reporting_sid',None):
+            self.show_report_step(2)
+
     def show_report_step(self,step,validate=True):
         if step not in (1,2,3):return
         sid=getattr(self,'reporting_sid',None)
