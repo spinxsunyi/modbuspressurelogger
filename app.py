@@ -117,6 +117,8 @@ class App(tk.Tk):
         style.map('Report.TCombobox',fieldbackground=[('readonly','white')],
                   foreground=[('readonly',INK)],selectbackground=[('readonly','white')],
                   selectforeground=[('readonly',INK)])
+        style.configure('Live.TCombobox',fieldbackground='white',background='white',foreground=INK,selectbackground='white',selectforeground=INK)
+        style.map('Live.TCombobox',fieldbackground=[('readonly','white')],foreground=[('readonly',INK)],selectbackground=[('readonly','white')],selectforeground=[('readonly',INK)])
         style.configure('Accent.TButton',background=TEAL,foreground='white',padding=(14,9),font=(UI_FONT,10,'bold'))
         # Disabled primary actions must lose their accent fill, not only dim the text.
         # State order matters: disabled is evaluated before active/pressed.
@@ -239,10 +241,10 @@ class App(tk.Tk):
                 self.viewer_scale_mode.set('Auto')
                 self.auto_history_scale()
                 self.slide_history(0)
-        labels=[('Reset',reset),('−',lambda:zoom(1.5)),('+',lambda:zoom(2/3)),('Pan',tools.pan)]
+        labels=[('Reset',reset),('−',lambda:zoom(1.5)),('+',lambda:zoom(2/3)),('✥',tools.pan)]
         for label,cmd in labels:
             ttk.Button(bar,text=label,command=cmd,style='Compact.TButton',
-                       width=6 if label!='Reset' else 7).pack(side='right',padx=2)
+                       width=4 if label=='✥' else (6 if label!='Reset' else 7)).pack(side='right',padx=2)
 
     def auto_history_scale(self):
         valid=[r['value'] for r in self.vrows if r['quality']=='OK' and r['value'] is not None]
@@ -289,7 +291,7 @@ class App(tk.Tk):
         ttk.Checkbutton(toolbar,text='Follow',variable=self.follow).pack(side='left')
         ttk.Label(toolbar,text='Window').pack(side='left',padx=(9,3))
         self.window=tk.StringVar(value='5 min')
-        ttk.Combobox(toolbar,textvariable=self.window,values=['1 min','5 min','10 min','15 min','30 min','1 hour','Buffer data'],state='readonly',width=9).pack(side='left',padx=(0,5))
+        ttk.Combobox(toolbar,textvariable=self.window,values=['1 min','5 min','10 min','15 min','30 min','1 hour','Buffer data'],state='readonly',style='Live.TCombobox',width=9).pack(side='left',padx=(0,5))
         ttk.Button(toolbar,text='Go to Live',style='Compact.TButton',command=lambda:self.follow.set(True)).pack(side='left')
         self.scale_mode=tk.StringVar(value='Auto')
         ttk.Radiobutton(toolbar,text='Auto scale',value='Auto',variable=self.scale_mode,command=self.select_live_scale).pack(side='left',padx=(10,0))
