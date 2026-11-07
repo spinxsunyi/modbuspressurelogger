@@ -120,17 +120,17 @@ class App(tk.Tk):
         style.configure('TLabelframe',background=BG,relief='solid',borderwidth=1)
         style.configure('TLabelframe.Label',font=(UI_FONT,11,'bold'),foreground=NAVY,background=BG)
         nav=tk.Frame(self,bg='#17334c'); nav.pack(fill='x')
-        self.brand=tk.Label(nav,text='Digital Pressure Recorder',font=(UI_FONT,17,'bold'),bg=NAVY,fg='white',padx=14,pady=7); self.brand.pack(side='left')
+        self.brand=tk.Label(nav,text='Digital Pressure Recorder',font=(UI_FONT,15,'bold'),bg=NAVY,fg='white',padx=12,pady=4); self.brand.pack(side='left')
         self.nav_buttons={}
         for page in ['Live Monitor','History','Reporting','Settings','About']:
-            button=tk.Button(nav,text=page,command=lambda p=page:self.show(p),bg=NAVY,fg='white',activebackground=TEAL_DARK,activeforeground='white',relief='flat',bd=0,padx=12,pady=7,font=(UI_FONT,10))
+            button=tk.Button(nav,text=page,command=lambda p=page:self.show(p),bg=NAVY,fg='white',activebackground=TEAL_DARK,activeforeground='white',relief='flat',bd=0,padx=10,pady=4,font=(UI_FONT,9))
             button.pack(side='left'); self.nav_buttons[page]=button
         self.global_status=tk.Label(nav,text='SIMULATION',bg='#17334c',fg='#ffcb72',padx=15); self.global_status.pack(side='right')
         self.credit=tk.Label(self,text='Created by Eka Yudhi Pratama  •  November 2026',bg='#17334c',fg='white')
         self.credit.pack(side='bottom',fill='x')
         self.host=ttk.Frame(self,padding=14); self.host.pack(fill='both',expand=True)
         self.pages={name:ttk.Frame(self.host) for name in ['Live Monitor','History','Reporting','Settings','Viewer']}
-        self.footer=ttk.Label(self,text='Ready',padding=8); self.footer.pack(fill='x')
+        self.footer=ttk.Label(self,text='Ready',padding=4); self.footer.pack(fill='x')
         self.make_live(); self.make_history(); self.make_reporting(); self.make_settings(); self.make_viewer(); self.enhance(); self.show('Live Monitor')
         # Route mouse-wheel scrolling only to the Settings page or Viewer sidebar.
         self.bind_all('<MouseWheel>',self.scroll_page,add='+')
