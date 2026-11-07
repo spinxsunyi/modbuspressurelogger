@@ -113,13 +113,15 @@ try:
     # Full-width Viewer: summary, read-only metadata and annotations below the chart.
     assert a.viewer_summary_vars['duration'].get().endswith('s')
     assert 'size' not in a.viewer_summary_vars
-    for panel_name in ('Job details','Annotations'):
-        panel,_=a.viewer_panels[panel_name]
-        assert panel.winfo_manager()=='pack'
-        a.toggle_viewer_panel(panel_name)
-        assert not panel.winfo_manager()
-        a.toggle_viewer_panel(panel_name)
-        assert panel.winfo_manager()
+    panel=a.viewer_bottom_content
+    assert panel.winfo_manager()=='pack'
+    a.toggle_viewer_panel()
+    assert not panel.winfo_manager()
+    a.update_idletasks()
+    a.toggle_viewer_panel()
+    assert panel.winfo_manager()=='pack'
+    assert not a.annotation_time.get()
+    assert a.viewer_annotation_menu.index('end')==0
     assert 'UI TEST' in a.viewer_details.cget('text')
     assert a.vcanvas.get_tk_widget().winfo_manager()=='pack'
     assert a.history_slider.winfo_class()=='TScrollbar'
