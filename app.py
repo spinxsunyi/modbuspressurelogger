@@ -115,6 +115,10 @@ class App(tk.Tk):
         self.pages={name:ttk.Frame(self.host) for name in ['Live Monitor','History','Settings','Viewer']}
         self.footer=ttk.Label(self,text='Ready',padding=8); self.footer.pack(fill='x')
         self.make_live(); self.make_history(); self.make_settings(); self.make_viewer(); self.enhance(); self.show('Live Monitor')
+        # Route mouse-wheel scrolling only to the Settings page or Viewer sidebar.
+        self.bind_all('<MouseWheel>',self.scroll_page,add='+')
+        self.bind_all('<Button-4>',self.scroll_page,add='+')
+        self.bind_all('<Button-5>',self.scroll_page,add='+')
         self.protocol('WM_DELETE_WINDOW',self.close); self.after(50,self.tick)
         if self.settings.get('auto_connect') and (self.settings['mode']=='Simulation' or self.settings['port']): self.after(200,self.connect)
     def show(self,name):
@@ -316,7 +320,19 @@ class App(tk.Tk):
         sel=self.history.selection()
         if sel:self.load_viewer(sel[0])
     def make_settings(self):
-        p=self.pages['Settings']; ttk.Label(p,text='Settings',style='Title.TLabel').pack(anchor='w',pady=8)
+        # Keep every setting reachable when the window is narrow or display scaling is high.
+        host=self.pages['Settings']
+        canvas=tk.Canvas(host,bg=BG,highlightthickness=0)
+        scrollbar=ttk.Scrollbar(host,orient='vertical',command=canvas.yview)
+        scrollbar.pack(side='right',fill='y')
+        canvas.pack(side='left',fill='both',expand=True)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        p=ttk.Frame(canvas,padding=(4,4,12,16))
+        window=canvas.create_window((0,0),window=p,anchor='nw')
+        p.bind('<Configure>',lambda e:canvas.configure(scrollregion=canvas.bbox('all')))
+        canvas.bind('<Configure>',lambda e:canvas.itemconfigure(window,width=e.width))
+        self.settings_canvas=canvas
+        ttk.Label(p,text='Settings',style='Title.TLabel').pack(anchor='w',pady=8)
         ttk.Label(p,text='Connection and unit changes apply after reconnecting. Stop recording before applying settings.').pack(anchor='w')
         columns=ttk.Frame(p);columns.pack(fill='both',expand=True,pady=(12,8))
         self.settings_columns=columns
@@ -377,7 +393,8 @@ class App(tk.Tk):
         self.viewer_title=ttk.Label(top,text='Recording Viewer',style='Title.TLabel'); self.viewer_title.pack(side='left',padx=12)
         ttk.Button(top,text='Refresh',command=lambda:self.load_viewer(self.viewer_sid)).pack(side='right')
         body=ttk.Panedwindow(p,orient='horizontal'); body.pack(fill='both',expand=True,pady=8); left=ttk.Frame(body); side=ttk.Frame(body); body.add(left,weight=4); body.add(side,weight=1)
-        scroll=tk.Canvas(side,width=285,bg='#f3f6f8',highlightthickness=0); sb=ttk.Scrollbar(side,orient='vertical',command=scroll.yview)
+        scroll=tk.Canvas(side,width=285,bg=BG,highlightthickness=0); sb=ttk.Scrollbar(side,orient='vertical',command=scroll.yview)
+        self.viewer_sidebar_canvas=scroll
         sb.pack(side='right',fill='y');scroll.pack(side='left',fill='both',expand=True);scroll.configure(yscrollcommand=sb.set)
         right=ttk.Frame(scroll,padding=10); item=scroll.create_window((0,0),window=right,anchor='nw')
         right.bind('<Configure>',lambda e:scroll.configure(scrollregion=scroll.bbox('all')))
@@ -584,6 +601,24 @@ class App(tk.Tk):
                 item.pack(side='bottom',fill='x')
             widget.pack(fill='both',expand=True)
         self.find_ports()
+
+    def scroll_page(self,event):
+        if getattr(self,'page',None) not in ('Settings','Viewer'):return
+        canvas=self.settings_canvas if self.page=='Settings' else self.viewer_sidebar_canvas
+        target=self.winfo_containing(event.x_root,event.y_root)
+        current=target
+        while current is not None and current!=canvas:
+            if current==canvas.master:break
+            current=current.master
+        if current!=canvas:return
+        if getattr(event,'num',None)==4:delta=-1
+        elif getattr(event,'num',None)==5:delta=1
+        else:
+            wheel=getattr(event,'delta',0)
+            if not wheel:return
+            delta=-1 if wheel>0 else 1
+        canvas.yview_scroll(delta,'units')
+        return 'break'
 
     def adapt_width(self,event):
         if event.widget!=self:return
