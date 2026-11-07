@@ -1,4 +1,4 @@
-"""Single-page report preview and PDF/JPEG export for Digital Pressure Recorder."""
+"""Pressure report pages and PDF/JPEG export for Digital Pressure Recorder."""
 import json
 import math
 import re
@@ -117,7 +117,7 @@ def report_figure(store, sid, unit='psi', time_range=None, time_axis='Elapsed Ti
                 txt(.25,y,label,9)
                 txt(.79,y,pressure,9)
         if len(events)>5:
-            txt(.06,.146,f'+ {len(events)-5} more events (see recording history)',8,color=gray)
+            txt(.06,.146,f'{len(events)-5} additional events on the following page(s)',8,color=gray)
     rule(.14)
     txt(.06,.128,'NOTES',10,True)
     import textwrap
@@ -129,8 +129,78 @@ def report_figure(store, sid, unit='psi', time_range=None, time_axis='Elapsed Ti
     if len(wrapped)>3:txt(.06,.051,'Notes truncated for single-page layout',7,color=gray)
     rule(.038)
     txt(.06,.029,'Digital Pressure Recorder v1.0  •  A software by Eka Yudhi Pratama',7,color=gray)
-    txt(.94,.029,'Page 1 of 1',7,color=gray,ha='right')
+    txt(.94,.029,f'Page 1 of {1+math.ceil(max(0,len(events)-5)/25)}',7,color=gray,ha='right')
     return fig
+
+def report_figures(store, sid, unit='psi', time_range=None, time_axis='Elapsed Time',
+                   show_events=True, show_grid=True, y_limits=None):
+    """Return all A4 report pages, including overflow event-list pages."""
+    first=report_figure(store,sid,unit,time_range,time_axis,show_events,show_grid,y_limits)
+    session=store.get(sid)
+    settings=json.loads(session['settings'])
+    offset=settings.get('utc_offset',8)
+    events=store.events(sid) if show_events else []
+    if time_range is not None:
+        lo,hi=time_range
+        events=[event for event in events if lo<=event['ts']<=hi]
+    if len(events)<=5:
+        return [first]
+
+    navy='#17334c'; teal='#008b92'; gray='#566779'
+    pages=[first]
+    with store.connect() as db:
+        readings=[]
+        for event in events[5:]:
+            reading=db.execute(
+                "SELECT value FROM samples WHERE session=? AND quality='OK' "
+                "AND value IS NOT NULL ORDER BY ABS(ts-?) LIMIT 1",
+                (sid,event['ts'])).fetchone()
+            readings.append(reading['value'] if reading else None)
+
+    remainder=events[5:]
+    total=1+math.ceil(len(remainder)/25)
+    for start_index in range(0,len(remainder),25):
+        page_number=2+start_index//25
+        fig=Figure(figsize=(8.27,11.69),dpi=110,facecolor='white')
+        def label(x,y,value,size=9,bold=False,color=navy,**kwargs):
+            fig.text(x,y,str(value),fontsize=size,color=color,
+                     fontweight='bold' if bold else 'normal',va='top',**kwargs)
+        def rule(y):
+            from matplotlib.lines import Line2D
+            fig.add_artist(Line2D([.055,.945],[y,y],transform=fig.transFigure,
+                                  color='#c9d3dc',lw=.8))
+        logo_ax=fig.add_axes([.06,.929,.060,.043])
+        logo_ax.imshow(np.asarray(gauge_image(512)),interpolation='lanczos')
+        logo_ax.set_axis_off()
+        label(.132,.966,'Digital Pressure Recorder',18,True)
+        label(.132,.937,'EVENT LIST — CONTINUED',9,True,color=teal)
+        label(.94,.963,'Version 1.0',8,color=gray,ha='right')
+        rule(.914)
+        details=json.loads(session['details'])
+        label(.06,.897,(details.get('well') or session['name'])+
+              ('  |  '+details['job'] if details.get('job') else ''),10,True)
+        label(.06,.862,'NO.',9,True,color=gray)
+        label(.125,.862,'TIME',9,True,color=gray)
+        label(.25,.862,'EVENT',9,True,color=gray)
+        label(.79,.862,'PRESSURE',9,True,color=gray)
+        rule(.837)
+        for local_index,event in enumerate(remainder[start_index:start_index+25]):
+            event_index=start_index+local_index
+            y=.817-local_index*.029
+            pressure=readings[event_index]
+            formatted=('—' if pressure is None else
+                       f'{from_psi(pressure,unit):,.2f} {unit}')
+            name=str(event['label']).replace('\\n',' ')[:60]
+            label(.06,y,f'{event_index+6:02d}',9)
+            label(.125,y,stamp(event['ts'],offset)[11:19],9)
+            label(.25,y,name,9)
+            label(.79,y,formatted,9)
+        rule(.038)
+        label(.06,.029,'Digital Pressure Recorder v1.0  •  A software by Eka Yudhi Pratama',7,color=gray)
+        label(.94,.029,f'Page {page_number} of {total}',7,color=gray,ha='right')
+        pages.append(fig)
+    return pages
+
 
 def graph_figure(store,sid,unit='psi',time_range=None,time_axis='Elapsed Time',show_events=True,show_grid=True,y_limits=None):
     session=store.get(sid)
