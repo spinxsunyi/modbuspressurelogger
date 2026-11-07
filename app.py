@@ -546,10 +546,12 @@ class App(tk.Tk):
         self.status_live.pack(side='right',padx=12)
         self.status_rec=tk.Label(self.global_status.master,text='REC OFF',foreground='#777777'); self.status_rec.pack(side='right',padx=12)
         self.bind('<Configure>', self.adapt_width, add='+')
-        # Share one compact toolbar for scale controls and chart navigation.
-        bar=self.live_chart_tools
-        bar.pack_forget()
-        bar.pack(before=self.lcanvas.get_tk_widget(),fill='x',pady=(2,4))
+        # Keep scaling and navigation together above the chart, on separate rows
+        # so controls do not clip at the supported 820px minimum window width.
+        self.live_chart_tools.pack_forget()
+        self.live_chart_tools.pack(before=self.lcanvas.get_tk_widget(),fill='x',pady=(0,3))
+        bar=ttk.Frame(self.lcanvas.get_tk_widget().master)
+        bar.pack(before=self.live_chart_tools,fill='x',pady=(2,2))
         self.live_min=tk.StringVar(value='0');self.live_max=tk.StringVar(value='3000');self.live_auto=tk.BooleanVar(value=True)
         for label,var in [('Pressure min',self.live_min),('Pressure max',self.live_max)]:
             ttk.Label(bar,text=label).pack(side='left');ttk.Entry(bar,textvariable=var,width=9).pack(side='left',padx=5)
