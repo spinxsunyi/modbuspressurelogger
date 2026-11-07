@@ -694,8 +694,12 @@ class App(tk.Tk):
                    command=self.apply_report_scale).pack(side='left',padx=(0,8))
         ttk.Button(actions,text='Reset Zoom',style='Compact.TButton',
                    command=self.reset_report_zoom).pack(side='left')
-        ttk.Label(section,text='Drag to select a reporting interval. Mouse wheel zooms the view without changing the selected interval.',
-                  foreground='#576677').pack(anchor='w',pady=(0,6))
+        self.report_drag_hint=ttk.Label(section,
+            text='Drag to select a reporting interval. Mouse wheel zooms the view without changing the selected interval.',
+            foreground='#576677')
+        # Shown only in manual graph-selection mode.
+        if self.report_range_mode.get()=='custom':
+            self.report_drag_hint.pack(anchor='w',pady=(0,6))
         self.report_range_chart=ttk.Frame(section)
         self.report_range_chart.pack(fill='both',expand=True)
         events_panel=ttk.LabelFrame(section,text='Event List — select an event to locate it on the graph',padding=(8,6))
@@ -900,6 +904,12 @@ class App(tk.Tk):
         if hasattr(self,'report_from_entry'):
             for widget in (self.report_from_entry,self.report_to_entry):
                 widget.configure(state='normal' if custom else 'disabled')
+        if hasattr(self,'report_drag_hint'):
+            if custom:
+                if not self.report_drag_hint.winfo_manager():
+                    self.report_drag_hint.pack(anchor='w',pady=(0,6),before=self.report_range_chart)
+            else:
+                self.report_drag_hint.pack_forget()
         if getattr(self,'report_range_canvas',None):
             self.report_range_selector.set_active(custom)
             self.report_range_shade.set_visible(custom)
