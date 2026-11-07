@@ -33,19 +33,19 @@ def export(store,sid,path,view,selected=False,resolution=None):
         raise ValueError('Unsupported data resolution')
     columns=['timestamp','elapsed_seconds','pressure','unit','quality','raw_register','status_register','latency_seconds']
     def values(r): return [stamp(r['ts'],offset),r['elapsed'],r['value'],'psi',r['quality'],r['raw'],r['status'],r['latency']]
-    def data_rows(cursor):
+    def data_rows(cursor,interval):
         # Retain actual samples only. Choose the first available reading at or
         # after each target time, anchored to the recording's start timestamp.
-        if resolution is None:
+        if interval is None:
             for r in cursor: yield values(r)
             return
         next_target=None
         for r in cursor:
             if next_target is None:
-                next_target=session['started']+math.ceil(max(0,r['ts']-session['started'])/resolution-1e-9)*resolution
+                next_target=session['started']+math.ceil(max(0,r['ts']-session['started'])/interval-1e-9)*interval
             if r['ts']+1e-9 < next_target: continue
             yield values(r)
-            next_target+=max(1,math.floor((r['ts']-next_target)/resolution)+1)*resolution
+            next_target+=max(1,math.floor((r['ts']-next_target)/interval)+1)*interval
     try:
         with store.connect() as c:
             c.execute('BEGIN')
@@ -59,7 +59,7 @@ def export(store,sid,path,view,selected=False,resolution=None):
                     w.writerow(['# Export resolution','All Data' if resolution is None else f'{resolution:g} s'])
                     w.writerow(['# Data treatment','Original samples' if resolution is None else 'Downsampled: original samples retained; no averaging or interpolation'])
                     w.writerow([]);w.writerow(columns)
-                    for row_values in data_rows(cursor): w.writerow(row_values)
+                    for row_values in data_rows(cursor,resolution): w.writerow(row_values)
             elif path.suffix=='.xlsx':
                 import xlsxwriter
                 with xlsxwriter.Workbook(tmp,{'constant_memory':True,'strings_to_formulas':False,'strings_to_urls':False}) as book:
@@ -83,28 +83,40 @@ def export(store,sid,path,view,selected=False,resolution=None):
                           **{k.replace('_',' ').title():v for k,v in details.items()},
                           'Start':stamp(session['started'],offset),'End':stamp(session['ended'],offset) if session['ended'] else 'In progress',
                           'Exported at':stamp(time.time(),offset),'Selected from':stamp(lo,offset),
-                          'Selected to':stamp(hi,offset),'Data resolution':'All Data' if resolution is None else f'{resolution:g} seconds',
+                          'Selected to':stamp(hi,offset),'Data sheets':'All Data; 1 Second; 1 Minute; 10 Minutes',
                           'Recording acquisition interval (configured)':str(settings.get('interval','Unknown'))+' s',
                           'Timestamp timezone':f'UTC{float(offset):+g}',
-                          'Data treatment':'Original samples' if resolution is None else 'Downsampled original samples (no averaging or interpolation)',
+                          'Data treatment':'All Data: original samples; other sheets: downsampled original samples (no averaging or interpolation)',
                           'Recording minimum (psi)':extrema[0],'Recording maximum (psi)':extrema[1]}
                     for n,(key,value) in enumerate(meta.items(),6):
                         sh.write(n,0,key,label_style);sh.write(n,1,str(value if value is not None else ''),value_style)
-                    sheet=None;row=0;part=0
-                    for row_values in data_rows(cursor):
-                        if sheet is None or row>=1048576:
-                            part+=1;sheet=book.add_worksheet('Data_'+str(part))
-                            sheet.set_row(0,32)
+                    # One workbook contains full-resolution data plus three independently
+                    # downsampled views. Re-query the same transaction snapshot for each.
+                    # Streaming rows avoids loading long recordings into memory.
+                    data_sets=[('All Data',None),('1 Second',1.0),('1 Minute',60.0),('10 Minutes',600.0)]
+                    for title,interval in data_sets:
+                        cursor=c.execute('SELECT * FROM samples WHERE session=? AND ts>=? AND ts<=? ORDER BY ts,id',(sid,lo,hi))
+                        sheet=None;row=0;part=0
+                        for row_values in data_rows(cursor,interval):
+                            if sheet is None or row>=1048576:
+                                part+=1
+                                name=title if part==1 else f'{title} {part}'
+                                sheet=book.add_worksheet(name)
+                                sheet.set_row(0,32)
+                                sheet.write_row(0,0,columns,table_header)
+                                sheet.freeze_panes(1,0)
+                                sheet.set_column(0,0,32)
+                                sheet.set_column(1,len(columns)-1,23)
+                                row=1
+                            local_dt=datetime.fromisoformat(row_values[0]).replace(tzinfo=None)
+                            sheet.write_datetime(row,0,local_dt,excel_datetime)
+                            sheet.write_row(row,1,row_values[1:]);row+=1
+                        if sheet is None:
+                            sheet=book.add_worksheet(title)
                             sheet.write_row(0,0,columns,table_header)
-                            sheet.freeze_panes(1,0);sheet.set_column(0,0,32)
+                            sheet.freeze_panes(1,0)
+                            sheet.set_column(0,0,32)
                             sheet.set_column(1,len(columns)-1,23)
-                            row=1
-                        # Excel stores timestamps as numeric dates, not ISO text.
-                        local_dt=datetime.fromisoformat(row_values[0]).replace(tzinfo=None)
-                        sheet.write_datetime(row,0,local_dt,excel_datetime)
-                        sheet.write_row(row,1,row_values[1:]);row+=1
-                    if sheet is None:
-                        sheet=book.add_worksheet('Data_1');sheet.write_row(0,0,columns,table_header)
                     ev=book.add_worksheet('Events');ev.set_column(0,0,32);ev.set_column(1,1,55)
                     ev.write_row(0,0,['timestamp','label','kind'],table_header)
                     ev.freeze_panes(1,0)
