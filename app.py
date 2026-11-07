@@ -149,7 +149,7 @@ class App(tk.Tk):
         if name=='History': self.refresh_history()
         if name=='Reporting': self.refresh_reporting()
     def plot(self,parent):
-        fig=Figure(figsize=(4,2),dpi=100,facecolor='white'); ax=fig.add_subplot(111); fig.subplots_adjust(left=.09,right=.98,bottom=.24,top=.92)
+        fig=Figure(figsize=(4,2),dpi=100,facecolor='white'); ax=fig.add_subplot(111); fig.subplots_adjust(left=.09,right=.98,bottom=.33,top=.92)
         canvas=FigureCanvasTkAgg(fig,master=parent); canvas.get_tk_widget().pack(fill='both',expand=True)
         return fig,ax,canvas
     def chart_tools(self,canvas,parent,live):
@@ -737,7 +737,8 @@ class App(tk.Tk):
     def paint_viewer(self):
         v=self.view_values(); ax=self.vax; ax.clear(); start=self.vsession['started']
         ax.plot([(r['ts']-start)/60 for r in self.vrows],[r['value'] if r['quality']=='OK' and r['value'] is not None else math.nan for r in self.vrows],color='#008b92',lw=1.1)
-        from matplotlib.ticker import FuncFormatter
+        from matplotlib.ticker import FuncFormatter, MaxNLocator
+        ax.xaxis.set_major_locator(MaxNLocator(nbins=5, min_n_ticks=2))
         def time_label(x,pos):
             if self.viewer_time_display.get()=='Elapsed time':
                 seconds=int(round(x*60))
@@ -966,7 +967,8 @@ class App(tk.Tk):
         if self.page=='Live Monitor' and self.buffer and time.monotonic()-self.last_plot>.5:
             self.last_plot=time.monotonic(); rows=list(self.buffer); end=rows[-1]['ts']; seconds={'1 min':60,'5 min':300,'10 min':600,'15 min':900,'30 min':1800,'1 hour':3600,'Buffer data':1e20}[self.window.get()]
             rows=[r for r in rows if r['ts']>=end-seconds] if self.follow.get() else rows
-            from matplotlib.ticker import FuncFormatter
+            from matplotlib.ticker import FuncFormatter, MaxNLocator
+            self.lax.xaxis.set_major_locator(MaxNLocator(nbins=5, min_n_ticks=2))
             self.line.set_data([r['ts'] for r in rows],[r['value'] if r['quality']=='OK' else math.nan for r in rows]);self.lax.set_ylabel('Pressure ('+self.settings['unit']+')');self.lax.yaxis.set_major_formatter(FuncFormatter(lambda p,pos:f'{from_psi(p,self.settings["unit"]):,.1f}'))
             self.lax.xaxis.set_major_formatter(FuncFormatter(lambda x,pos:stamp(x,self.settings['utc_offset'])[11:19]))
             self.lax.tick_params(axis='x',labelrotation=35)
