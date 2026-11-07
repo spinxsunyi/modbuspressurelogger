@@ -1253,26 +1253,27 @@ class App(tk.Tk):
         compact=event.width<1120
         if compact==getattr(self,'compact',None):return
         self.compact=compact
-        self.brand.config(font=(UI_FONT,14 if compact else 20,'bold'),
-                          padx=6 if compact else 18)
+        self.brand.config(font=(UI_FONT,14 if compact else 15,'bold'),
+                          padx=6 if compact else 12)
         for button in self.nav_buttons.values():
-            button.config(padx=6 if compact else 15)
+            button.config(padx=6 if compact else 10)
         visible=str(self.details_panel) in self.live_pane.panes()
         if compact and visible:
             self.live_pane.forget(self.details_panel)
         elif not compact and self.details_user_visible and not visible:
             self.live_pane.add(self.details_panel,weight=1)
-        # Stack the About panel when the settings grid becomes too narrow.
+        # Settings actions replaced the former About panel. Keep both columns
+        # on wide screens; stack them on narrow windows without hiding controls.
         self.settings_device.grid_configure(padx=(0,0) if compact else (0,8))
         self.settings_display.grid_configure(padx=(0,0) if compact else (0,8))
-        self.settings_about.grid_forget()
+        self.settings_actions.grid_forget()
         if compact:
             self.settings_columns.columnconfigure(1,weight=0)
-            self.settings_about.grid(row=2,column=0,sticky='ew',pady=(12,0))
+            self.settings_actions.grid(row=2,column=0,sticky='ew',pady=(12,0))
         else:
             self.settings_columns.columnconfigure(1,weight=2)
-            self.settings_about.grid(row=0,column=1,rowspan=2,
-                                     sticky='nsew',padx=(8,0))
+            self.settings_actions.grid(row=0,column=1,rowspan=2,
+                                       sticky='nsew',padx=(8,0),pady=(0,10))
 
     def show_live_options(self):
         if getattr(self,'live_options',None) and self.live_options.winfo_exists():
