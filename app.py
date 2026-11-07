@@ -638,7 +638,16 @@ class App(tk.Tk):
         left.grid(row=0,column=0,sticky='nsew',padx=(0,7))
         right.grid(row=0,column=1,sticky='nsew',padx=(7,0))
 
-        modes=ttk.Frame(left);modes.pack(fill='x',pady=(0,11))
+        # Time axis stays on the first row, aligned to the upper-right of the left panel.
+        header_left=ttk.Frame(left);header_left.pack(fill='x',pady=(0,11))
+        modes=ttk.Frame(header_left);modes.pack(side='left')
+        axisbar=ttk.Frame(header_left);axisbar.pack(side='right',padx=(12,0))
+        ttk.Label(axisbar,text='Time axis').pack(side='left',padx=(0,6))
+        axis=ttk.Combobox(axisbar,textvariable=self.report_axis,state='readonly',
+                          style='Report.TCombobox',width=14,
+                          values=('Elapsed Time','Date & Time'))
+        axis.pack(side='left')
+        axis.bind('<<ComboboxSelected>>',lambda event:self.update_report_graph_options())
         ttk.Radiobutton(modes,text='Full Recording',value='full',variable=self.report_range_mode,
                         command=self.change_report_range_mode).pack(side='left',padx=(0,15))
         ttk.Radiobutton(modes,text='Select Time Range on Graph',value='custom',
@@ -652,14 +661,6 @@ class App(tk.Tk):
         ttk.Label(bounds,text='To (min)').pack(side='left')
         self.report_to_entry=ttk.Entry(bounds,textvariable=self.report_end,width=10)
         self.report_to_entry.pack(side='left',padx=(6,0))
-
-        axisbar=ttk.Frame(left);axisbar.pack(fill='x',pady=(0,10))
-        ttk.Label(axisbar,text='Time axis').pack(side='left',padx=(0,8))
-        axis=ttk.Combobox(axisbar,textvariable=self.report_axis,state='readonly',
-                          style='Report.TCombobox',width=16,
-                          values=('Elapsed Time','Date & Time'))
-        axis.pack(side='left')
-        axis.bind('<<ComboboxSelected>>',lambda event:self.update_report_graph_options())
 
         scale=ttk.Frame(left);scale.pack(fill='x')
         self.report_xfrom_label=ttk.Label(scale,text='View X from (min)')
@@ -675,11 +676,9 @@ class App(tk.Tk):
                           values=('psi','bar','kPa','MPa'))
         unit.pack(side='left')
         unit.bind('<<ComboboxSelected>>',lambda event:self.update_report_graph_options())
-
-        display=ttk.Frame(right);display.pack(fill='x',pady=(0,12))
-        ttk.Checkbutton(display,text='Events',variable=self.report_events,
-                        command=self.update_report_graph_options).pack(side='left',padx=(0,18))
-        ttk.Checkbutton(display,text='Grid',variable=self.report_grid,
+        ttk.Checkbutton(unitrow,text='Events',variable=self.report_events,
+                        command=self.update_report_graph_options).pack(side='left',padx=(20,12))
+        ttk.Checkbutton(unitrow,text='Grid',variable=self.report_grid,
                         command=self.update_report_graph_options).pack(side='left')
 
         yrange=ttk.Frame(right);yrange.pack(fill='x',pady=(0,11))
