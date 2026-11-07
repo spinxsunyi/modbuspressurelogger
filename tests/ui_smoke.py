@@ -22,11 +22,20 @@ def pump(seconds=.5):
     while time.monotonic()<until:a.update();time.sleep(.02)
 try:
     pump(1.2);assert a.latest and a.latest['quality']=='OK'
+    assert a.record_btn.cget('text')=='⏺ Start recording'
+    assert a.record_btn.cget('style')=='Record.TButton'
+    assert a.connect_btn.cget('style')=='Compact.TButton'
     a.record();pump(.5);assert a.sid
+    assert a.record_btn.cget('text')=='■ Stop Recording'
+    assert a.record_btn.cget('style')=='Stop.TButton'
     sid=a.sid;a.detail_vars['well'].set('UI TEST');pump(.8)
     assert json.loads(a.store.get(sid)['details'])['well']=='UI TEST'
     a.add_live_event();assert len(a.store.events(sid))==1
     a.live_min.set('0');a.live_max.set('3000');a.apply_live_scale();assert a.lax.get_ylim()==(0,3000)
+    a.live_auto.set(True);a.toggle_live_auto_scale()
+    assert a.lax.get_autoscaley_on()
+    a.live_auto.set(False);a.toggle_live_auto_scale()
+    assert not a.lax.get_autoscaley_on()
     a.slide_live(0);assert not a.follow.get();a.follow.set(True)
     # A native scrollbar replaces the miniature pressure plot.
     assert a.live_slider.winfo_class()=='TScrollbar'
@@ -79,6 +88,8 @@ try:
     assert a.settings_canvas.yview()[1] > 0.95
     a.geometry('1280x820');pump(.3)
     a.show('Live Monitor');a.record();pump(.4);assert not a.sid
+    assert a.record_btn.cget('text')=='⏺ Start recording'
+    assert a.record_btn.cget('style')=='Record.TButton'
     a.load_viewer(sid);pump(.4);a.history_window.set('1 min');a.slide_history(0);a.history_labels.set(False);a.paint_viewer();a.history_labels.set(True);a.view_vars['ymax'].set('3000');a.apply_view();a.capture_view();pump(.2)
     assert a.store.get(sid)['state']=='Completed'
     # Produce actual UI screenshots, using seeded two-minute recording for viewer.
