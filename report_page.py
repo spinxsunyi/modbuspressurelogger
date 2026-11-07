@@ -4,15 +4,35 @@ import math
 import re
 from datetime import datetime
 from matplotlib.figure import Figure
-from matplotlib.ticker import MaxNLocator, FuncFormatter, AutoMinorLocator
+from matplotlib.ticker import MaxNLocator, FuncFormatter, AutoMinorLocator, MultipleLocator
 from exports import stamp
 from units import from_psi
 from app_icon import gauge_image
 import numpy as np
 
+def engineering_time_scale(lo, hi):
+    """Round display width only; never modify the selected data interval."""
+    duration=max(hi-lo,1/60)
+    quantum=5 if duration<=60 else 10 if duration<=180 else 30 if duration<=720 else 60
+    width=max(quantum,math.ceil((duration-1e-9)/quantum)*quantum)
+    raw=width/6
+    steps=[1,2,5,10,15,20,30,60,120,180,240,360,720,1440]
+    major=min(steps,key=lambda step:(abs(step-raw),step))
+    # Keep 48 -> 50 minutes at 10-minute majors and 2-minute minors.
+    return lo,lo+width,major,major/5
+
+
+def apply_report_time_scale(ax, lo, hi):
+    left,right,major,minor=engineering_time_scale(lo,hi)
+    ax.set_xlim(left,right)
+    ax.xaxis.set_major_locator(MultipleLocator(major))
+    ax.xaxis.set_minor_locator(MultipleLocator(minor))
+
+
 def engineering_grid(ax, visible=True):
     """Light five-way subdivisions for pressure and time, adapting to zoom/scale."""
-    ax.xaxis.set_minor_locator(AutoMinorLocator(5))
+    if not isinstance(ax.xaxis.get_minor_locator(),MultipleLocator):
+        ax.xaxis.set_minor_locator(AutoMinorLocator(5))
     ax.yaxis.set_minor_locator(AutoMinorLocator(5))
     ax.grid(visible=visible, which='major', color='#8d98a3', alpha=.30, linewidth=.8)
     ax.grid(visible=visible, which='minor', color='#aab4bd', alpha=.16, linewidth=.45)
@@ -109,8 +129,9 @@ def report_figure(store, sid, unit='psi', time_range=None, time_axis='Elapsed Ti
     configure_time_axis(ax,start,offset,time_axis)
     ax.set(ylabel=f'Pressure ({unit})')
     if y_limits is not None:ax.set_ylim(*y_limits)
-    if time_range is not None:ax.set_xlim((time_range[0]-start)/60,(time_range[1]-start)/60)
-    ax.xaxis.set_major_locator(MaxNLocator(6))
+    lo=(time_range[0]-start)/60 if time_range is not None else xx[0]
+    hi=(time_range[1]-start)/60 if time_range is not None else xx[-1]
+    apply_report_time_scale(ax,lo,hi)
     engineering_grid(ax,show_grid)
     ax.tick_params(labelsize=8)
     # The four statistics are computed from the selected interval above, not the full recording.
@@ -269,9 +290,9 @@ def full_size_chart_figure(store, sid, unit='psi', time_range=None,
     ax.set_ylabel(f'Pressure ({unit})')
     if y_limits is not None:
         ax.set_ylim(*y_limits)
-    if time_range is not None:
-        ax.set_xlim((time_range[0]-start)/60,(time_range[1]-start)/60)
-    ax.xaxis.set_major_locator(MaxNLocator(11))
+    lo=(time_range[0]-start)/60 if time_range is not None else (rows[0]['ts']-start)/60
+    hi=(time_range[1]-start)/60 if time_range is not None else (rows[-1]['ts']-start)/60
+    apply_report_time_scale(ax,lo,hi)
     # Match the portrait report's default major tick density (1000 psi at ~5000 psi full scale).
     # Minor engineering-grid subdivisions remain one fifth of the major interval.
     ax.yaxis.set_major_locator(MaxNLocator(6))
@@ -304,7 +325,9 @@ def graph_figure(store,sid,unit='psi',time_range=None,time_axis='Elapsed Time',s
     configure_time_axis(ax,start,offset,time_axis)
     ax.set(title=report_name(session),ylabel=f'Pressure ({unit})')
     if y_limits is not None:ax.set_ylim(*y_limits)
-    if time_range is not None:ax.set_xlim((time_range[0]-start)/60,(time_range[1]-start)/60)
+    lo=(time_range[0]-start)/60 if time_range is not None else (rows[0]['ts']-start)/60
+    hi=(time_range[1]-start)/60 if time_range is not None else (rows[-1]['ts']-start)/60
+    apply_report_time_scale(ax,lo,hi)
     engineering_grid(ax,show_grid);fig.tight_layout()
     return fig
 
