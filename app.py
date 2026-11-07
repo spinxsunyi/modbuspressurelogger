@@ -103,6 +103,8 @@ class App(tk.Tk):
         style.configure('Accent.TButton',background=TEAL,foreground='white',padding=(14,9),font=(UI_FONT,10,'bold'))
         style.map('Accent.TButton',background=[('pressed',TEAL_DARK),('active',TEAL_DARK)],
                   foreground=[('disabled','#6d818b'),('!disabled','white')])
+        style.configure('Report.TButton',background='#21834b',foreground='white',padding=(15,9),font=(UI_FONT,11,'bold'))
+        style.map('Report.TButton',background=[('pressed','#176538'),('active','#176538')],foreground=[('!disabled','white')])
         style.configure('Record.TButton',background='#d52e36',foreground='white',padding=(14,9),font=(UI_FONT,10,'bold'))
         style.map('Record.TButton',background=[('pressed','#a91d27'),('active','#bd232e')],foreground=[('!disabled','white')])
         style.configure('Stop.TButton',background='#d52e36',foreground='white',padding=(14,9),font=(UI_FONT,10,'bold'))
@@ -119,16 +121,16 @@ class App(tk.Tk):
         nav=tk.Frame(self,bg='#17334c'); nav.pack(fill='x')
         self.brand=tk.Label(nav,text='Digital Pressure Recorder',font=(UI_FONT,20,'bold'),bg=NAVY,fg='white',padx=18,pady=10); self.brand.pack(side='left')
         self.nav_buttons={}
-        for page in ['Live Monitor','History','Settings','About']:
+        for page in ['Live Monitor','History','Reporting','Settings','About']:
             button=tk.Button(nav,text=page,command=lambda p=page:self.show(p),bg=NAVY,fg='white',activebackground=TEAL_DARK,activeforeground='white',relief='flat',bd=0,padx=15,pady=12,font=(UI_FONT,10))
             button.pack(side='left'); self.nav_buttons[page]=button
         self.global_status=tk.Label(nav,text='SIMULATION',bg='#17334c',fg='#ffcb72',padx=15); self.global_status.pack(side='right')
         self.credit=tk.Label(self,text='Created by Eka Yudhi Pratama  •  November 2026',bg='#17334c',fg='white')
         self.credit.pack(side='bottom',fill='x')
         self.host=ttk.Frame(self,padding=14); self.host.pack(fill='both',expand=True)
-        self.pages={name:ttk.Frame(self.host) for name in ['Live Monitor','History','Settings','Viewer']}
+        self.pages={name:ttk.Frame(self.host) for name in ['Live Monitor','History','Reporting','Settings','Viewer']}
         self.footer=ttk.Label(self,text='Ready',padding=8); self.footer.pack(fill='x')
-        self.make_live(); self.make_history(); self.make_settings(); self.make_viewer(); self.enhance(); self.show('Live Monitor')
+        self.make_live(); self.make_history(); self.make_reporting(); self.make_settings(); self.make_viewer(); self.enhance(); self.show('Live Monitor')
         # Route mouse-wheel scrolling only to the Settings page or Viewer sidebar.
         self.bind_all('<MouseWheel>',self.scroll_page,add='+')
         self.bind_all('<Button-4>',self.scroll_page,add='+')
@@ -142,6 +144,7 @@ class App(tk.Tk):
         self.pages[name].pack(fill='both',expand=True); self.page=name
         for key,button in self.nav_buttons.items(): button.config(bg=TEAL if key==('History' if name=='Viewer' else name) else NAVY)
         if name=='History': self.refresh_history()
+        if name=='Reporting': self.refresh_reporting()
     def plot(self,parent):
         fig=Figure(figsize=(4,2),dpi=100,facecolor='white'); ax=fig.add_subplot(111); fig.subplots_adjust(left=.09,right=.98,bottom=.15,top=.92)
         canvas=FigureCanvasTkAgg(fig,master=parent); canvas.get_tk_widget().pack(fill='both',expand=True)
@@ -344,7 +347,7 @@ class App(tk.Tk):
                    command=self.refresh_history).pack(side='left')
         ttk.Label(p,text='Search by well, job, engineer or record ID. Double-click a recording to open it.',
                   foreground='#576677').pack(anchor='w',pady=(0,5))
-        ttk.Label(p,text='Reporting is available: select the appropriate recording, then click Open in Viewer to review and export the report.',
+        ttk.Label(p,text='To prepare a report, select a recording and open it in Viewer, then click Create Report.',
                   foreground=TEAL_DARK,wraplength=1100).pack(anchor='w',pady=(0,10))
 
         table=ttk.Frame(p);table.pack(fill='both',expand=True)
@@ -378,6 +381,9 @@ class App(tk.Tk):
         self.history_delete=ttk.Button(footer,text='Delete recording',style='Compact.TButton',
                                        command=self.delete_selected_recording,state='disabled')
         self.history_delete.pack(side='right',padx=(0,10))
+        self.history_report=ttk.Button(footer,text='Create Report',style='Accent.TButton',
+                                       command=self.report_selected_recording,state='disabled')
+        self.history_report.pack(side='right',padx=(0,10))
 
     def clear_history_search(self):
         self.search.set('')
@@ -388,6 +394,7 @@ class App(tk.Tk):
         valid=bool(chosen and self.history.exists(chosen[0]))
         self.history_open.configure(state='normal' if valid else 'disabled')
         self.history_delete.configure(state='normal' if valid else 'disabled')
+        self.history_report.configure(state='normal' if valid else 'disabled')
         self.history_selection.configure(text='1 recording selected' if valid else 'Select a recording to review')
 
     def refresh_history(self):
@@ -439,6 +446,8 @@ class App(tk.Tk):
             return
         try:
             if self.store.delete_session(sid):
+                if sid==getattr(self,'reporting_sid',None):
+                    self.reporting_sid=None
                 if sid==self.viewer_sid:
                     self.viewer_sid=None
                     self.vsession=None
@@ -448,6 +457,60 @@ class App(tk.Tk):
                 self.footer.configure(text='Recording deleted')
         except Exception as exc:
             messagebox.showerror('Delete recording',str(exc),parent=self)
+
+    def report_selected_recording(self):
+        chosen=self.history.selection()
+        if chosen and self.history.exists(chosen[0]):
+            self.open_reporting(chosen[0])
+
+    def make_reporting(self):
+        p=self.pages['Reporting']
+        header=ttk.Frame(p);header.pack(fill='x',pady=(0,12))
+        ttk.Label(header,text='Reporting',style='Title.TLabel').pack(side='left')
+        ttk.Button(header,text='Select from History',style='Compact.TButton',
+                   command=lambda:self.show('History')).pack(side='right')
+        self.reporting_record=tk.StringVar(value='No recording selected')
+        ttk.Label(p,textvariable=self.reporting_record,font=(UI_FONT,14,'bold')).pack(anchor='w',pady=(0,10))
+        ttk.Label(p,text='Selected recording',foreground='#576677').pack(anchor='w')
+        self.reporting_info=ttk.Label(p,text='Select a recording from History or Viewer to begin.',
+                                      justify='left',font=(UI_FONT,11))
+        self.reporting_info.pack(anchor='w',pady=(8,20))
+        ttk.Separator(p).pack(fill='x',pady=(0,16))
+        ttk.Label(p,text='Report preparation workspace',font=(UI_FONT,13,'bold')).pack(anchor='w')
+        ttk.Label(p,text='This page is ready for the next iteration: report configuration, preview, and export. '
+                  'No report has been generated yet.',foreground='#576677',wraplength=950).pack(anchor='w',pady=(10,14))
+        ttk.Button(p,text='Review selected recording',style='Compact.TButton',
+                   command=self.review_reporting_record).pack(anchor='w')
+
+    def open_reporting(self,sid):
+        if not sid or not self.store.get(sid):
+            messagebox.showwarning('Reporting','Please select a valid recording.',parent=self)
+            return
+        self.reporting_sid=sid
+        self.refresh_reporting()
+        self.show('Reporting')
+
+    def refresh_reporting(self):
+        sid=getattr(self,'reporting_sid',None)
+        session=self.store.get(sid) if sid else None
+        if not session:
+            self.reporting_sid=None
+            self.reporting_record.set('No recording selected')
+            self.reporting_info.configure(text='Select a recording from History or Viewer to begin.')
+            return
+        details=json.loads(session['details'])
+        self.reporting_record.set((details.get('well') or session['name'])+'  |  '+(details.get('job') or 'Recording'))
+        self.reporting_info.configure(text='Record ID: '+session['id']+'\n'
+            +'Engineer: '+(details.get('engineer') or '—')+'\n'
+            +'Source: '+session['mode']+'\n'
+            +'Status: '+session['state'])
+
+    def review_reporting_record(self):
+        sid=getattr(self,'reporting_sid',None)
+        if sid and self.store.get(sid):
+            self.load_viewer(sid)
+        else:
+            self.show('History')
 
     def make_settings(self):
         # Keep every setting reachable when the window is narrow or display scaling is high.
@@ -525,6 +588,8 @@ class App(tk.Tk):
                    command=lambda:self.show('History')).pack(side='left')
         self.viewer_title=ttk.Label(top,text='Recording Viewer',style='Title.TLabel')
         self.viewer_title.pack(side='left',padx=12)
+        ttk.Button(top,text='Create Report',style='Report.TButton',
+                   command=lambda:self.open_reporting(self.viewer_sid)).pack(side='right',padx=(0,10))
         ttk.Button(top,text='Refresh',style='Compact.TButton',
                    command=lambda:self.load_viewer(self.viewer_sid)).pack(side='right')
 
