@@ -756,6 +756,8 @@ class App(tk.Tk):
                             command=self.refresh_reporting).pack(side='left',padx=(0,12))
         ttk.Button(actions,text='Export Selected',style='Accent.TButton',
                    command=lambda:self.export_reporting(self.report_format.get())).pack(side='right')
+        ttk.Button(actions,text='Edit Metadata & Notes',style='Compact.TButton',
+                   command=self.edit_report_metadata).pack(side='right',padx=(0,12))
         self.report_preview_info=tk.StringVar(value='')
         ttk.Label(three,textvariable=self.report_preview_info,foreground='#576677').pack(anchor='w',pady=(0,6))
         area=ttk.LabelFrame(three,text='Preview',padding=8);area.pack(fill='both',expand=True)
@@ -773,6 +775,70 @@ class App(tk.Tk):
         self.reporting_preview_sid=None
         self.report_range_sid=None
         self.show_report_step(1,validate=False)
+
+    def edit_report_metadata(self):
+        sid=getattr(self,'reporting_sid',None)
+        session=self.store.get(sid) if sid else None
+        if not session:
+            messagebox.showinfo('Select Record','Select a recording first.',parent=self)
+            return
+        # Flush pending edits from the Live Monitor before loading the same
+        # record into this dialog, so its data cannot be silently overwritten.
+        if getattr(self,'detail_sid',None)==sid and getattr(self,'save_job',None):
+            self.after_cancel(self.save_job)
+            self.save_job=None
+            if not self.save_details():return
+            session=self.store.get(sid)
+        details=json.loads(session['details'])
+        dialog=tk.Toplevel(self)
+        dialog.title('Edit Metadata & Notes')
+        dialog.transient(self)
+        dialog.resizable(True,True)
+        dialog.geometry('610x610')
+        dialog.minsize(460,470)
+        body=ttk.Frame(dialog,padding=20)
+        body.pack(fill='both',expand=True)
+        ttk.Label(body,text='Edit Metadata & Notes',
+                  font=(UI_FONT,15,'bold')).pack(anchor='w',pady=(0,5))
+        ttk.Label(body,text='Changes are saved to the original recording in History.',
+                  foreground='#576677').pack(anchor='w',pady=(0,15))
+        form=ttk.Frame(body)
+        form.pack(fill='both',expand=True)
+        form.columnconfigure(1,weight=1)
+        values={}
+        for index,key in enumerate(FIELDS):
+            ttk.Label(form,text=key.replace('_',' ').title()).grid(
+                row=index,column=0,sticky='nw',padx=(0,14),pady=7)
+            if key=='notes':
+                widget=tk.Text(form,height=6,wrap='word',font=(UI_FONT,10))
+                widget.insert('1.0',details.get(key,''))
+            else:
+                var=tk.StringVar(value=str(details.get(key,'') or ''))
+                values[key]=var
+                widget=ttk.Entry(form,textvariable=var)
+            widget.grid(row=index,column=1,sticky='nsew',pady=5)
+            if key=='notes':notes_widget=widget
+        buttons=ttk.Frame(body)
+        buttons.pack(fill='x',pady=(16,0))
+        def save():
+            updated=dict(details)
+            updated.update({key:var.get() for key,var in values.items()})
+            updated['notes']=notes_widget.get('1.0','end-1c')
+            try:
+                self.store.update(sid,'details',updated)
+            except Exception as exc:
+                messagebox.showerror('Save failed',str(exc),parent=dialog)
+                return
+            if getattr(self,'detail_sid',None)==sid:
+                self.load_details(sid)
+            dialog.destroy()
+            self.refresh_reporting()
+        ttk.Button(buttons,text='Save Changes',style='Accent.TButton',
+                   command=save).pack(side='right')
+        ttk.Button(buttons,text='Cancel',command=dialog.destroy).pack(
+            side='right',padx=(0,10))
+        dialog.grab_set()
+        dialog.focus_set()
 
     def toggle_report_history(self):
         if self.report_history_panel.winfo_manager():
