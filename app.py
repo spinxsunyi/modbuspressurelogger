@@ -889,6 +889,8 @@ class App(tk.Tk):
             messagebox.showerror('Graph scale',str(exc),parent=self);return
         # Recreate on each visit so edits to notes/events are reflected.
         for child in self.reporting_preview.winfo_children():child.destroy()
+        self.reporting_figure_canvas=None
+        self.reporting_figure=None
         try:
             fmt=self.report_format.get()
             self.report_preview_info.set('PDF report preview' if fmt=='pdf' else 'JPEG graph preview' if fmt=='jpg' else 'Detailed recorded data will be exported; graph preview is not applicable.')
@@ -919,8 +921,6 @@ class App(tk.Tk):
         if getattr(self,'report_format',None) and self.report_format.get()=='jpg':
             # JPEG graph preview fits the available viewport in both directions.
             # Do not resize the export figure: this is a display-only adjustment.
-            viewport.itemconfigure(self.reporting_window,width=max(1,width-24),
-                                   height=max(1,height-24))
             canvas=getattr(self,'reporting_figure_canvas',None)
             if canvas is not None and canvas.get_tk_widget().winfo_exists():
                 fig=canvas.figure
@@ -930,8 +930,8 @@ class App(tk.Tk):
                 canvas.get_tk_widget().configure(width=max(1,width-48),
                                                  height=max(1,height-48))
                 canvas.draw_idle()
-        else:
-            viewport.itemconfigure(self.reporting_window,width=0,height=0)
+        # The PDF uses its natural A4 figure dimensions. Never constrain the
+        # shared canvas window to the JPEG viewport size.
 
     def draw_report_pan_icon(self):
         c=self.report_pan_button;c.delete('all')
