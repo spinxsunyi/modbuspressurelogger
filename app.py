@@ -1920,6 +1920,43 @@ class App(tk.Tk):
             try:export(self.store,sid,path,v,selected);self.engine.emit('exported',path=path)
             except Exception as e:self.engine.emit('export_error',text='Export failed: '+str(e))
         threading.Thread(target=work,daemon=True).start()
+    def show_export_success(self,path):
+        """Notify on the Tk main thread after the export has completed."""
+        dialog=tk.Toplevel(self)
+        dialog.title('Export successful')
+        dialog.transient(self)
+        dialog.resizable(False,False)
+        dialog.protocol('WM_DELETE_WINDOW',dialog.destroy)
+        set_window_icon(dialog)
+        body=ttk.Frame(dialog,padding=24)
+        body.pack(fill='both',expand=True)
+        ttk.Label(body,text='Export completed successfully',font=(UI_FONT,13,'bold')).pack(anchor='w',pady=(0,12))
+        ttk.Label(body,text='Saved file:',foreground='#576677').pack(anchor='w')
+        ttk.Label(body,text=Path(path).name,wraplength=460).pack(anchor='w',pady=(3,16))
+        actions=ttk.Frame(body)
+        actions.pack(fill='x')
+        def open_folder():
+            folder=Path(path).resolve().parent
+            try:
+                if os.name=='nt':os.startfile(str(folder))
+                else:
+                    import subprocess
+                    subprocess.Popen(['open' if sys.platform=='darwin' else 'xdg-open',str(folder)])
+                dialog.destroy()
+            except Exception as exc:
+                messagebox.showerror('Cannot open folder',str(exc),parent=dialog)
+        ttk.Button(actions,text='Go to Export Folder',command=open_folder).pack(side='left')
+        ok=ttk.Button(actions,text='OK',command=dialog.destroy)
+        ok.pack(side='right',padx=(16,0))
+        dialog.update_idletasks()
+        dialog.geometry(f'+{self.winfo_rootx()+max(0,(self.winfo_width()-dialog.winfo_reqwidth())//2)}+{self.winfo_rooty()+max(0,(self.winfo_height()-dialog.winfo_reqheight())//2)}')
+        dialog.grab_set()
+        ok.focus_set()
+        try:
+            if os.name=='nt':ctypes.windll.user32.MessageBeep(0x40)
+            else:dialog.bell()
+        except Exception:pass
+
     def tick(self):
         # Give shutdown priority over drawing charts or processing queued samples.
         # Otherwise the UI can look frozen even after the window's X is clicked.
@@ -1955,7 +1992,10 @@ class App(tk.Tk):
                     if kind=='storage_error':messagebox.showerror('RECORDING STOPPED - storage failure',d['text'])
                 elif kind=='communication_error':
                     self.footer.config(text='Modbus communication error: '+d['text'][:160])
-                elif kind=='exported':self.exporting=False;self.footer.config(text='Export saved: '+d['path'])
+                elif kind=='exported':
+                    self.exporting=False
+                    self.footer.config(text='Export saved: '+d['path'])
+                    self.show_export_success(d['path'])
                 elif kind=='export_error':self.exporting=False;messagebox.showerror('Export failed',d['text'])
                 elif kind=='error':
                     self.pending=False;self.record_btn.config(state='normal')
