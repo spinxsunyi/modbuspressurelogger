@@ -28,6 +28,15 @@ try:
     a.add_live_event();assert len(a.store.events(sid))==1
     a.live_min.set('0');a.live_max.set('3000');a.apply_live_scale();assert a.lax.get_ylim()==(0,3000)
     a.slide_live(0);assert not a.follow.get();a.follow.set(True)
+    # A native scrollbar replaces the miniature pressure plot.
+    assert a.live_slider.winfo_class()=='TScrollbar'
+    assert a.history_slider.winfo_class()=='TScrollbar'
+    a.live_slider.on_scroll('moveto','0')
+    assert not a.follow.get()
+    a.follow.set(True)
+    a.show_live_options();pump(.1)
+    assert a.live_options.winfo_exists()
+    a.live_options.destroy()
     a.paint_live_events();assert len(a.live_events.get_children())==1
     # Chart-focused layout: event list starts hidden and can be expanded on demand.
     assert not a.events_expanded
