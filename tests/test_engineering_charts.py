@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import pytest
 from matplotlib.figure import Figure
 from matplotlib.ticker import MultipleLocator
-from report_page import engineering_time_scale, apply_report_time_scale, engineering_grid
+from chart_scale import engineering_time_scale, apply_report_time_scale, apply_engineering_grid
 from core import Store, DEFAULTS
 
 
@@ -29,7 +29,7 @@ def test_48_minute_chart_has_10_minute_major_2_minute_minor():
     fig = Figure()
     ax = fig.add_subplot(111)
     apply_report_time_scale(ax, 0, 48)
-    engineering_grid(ax)
+    apply_engineering_grid(ax)
     assert ax.get_xlim() == pytest.approx((0, 50))
     assert isinstance(ax.xaxis.get_major_locator(), MultipleLocator)
     assert isinstance(ax.xaxis.get_minor_locator(), MultipleLocator)
