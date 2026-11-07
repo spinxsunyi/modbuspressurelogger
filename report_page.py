@@ -266,8 +266,6 @@ def full_size_chart_figure(store, sid, unit='psi', time_range=None,
     lo=(time_range[0]-start)/60 if time_range is not None else (rows[0]['ts']-start)/60
     hi=(time_range[1]-start)/60 if time_range is not None else (rows[-1]['ts']-start)/60
     apply_report_time_scale(ax,lo,hi)
-    # Match the portrait report's default major tick density (1000 psi at ~5000 psi full scale).
-    # Minor engineering-grid subdivisions remain one fifth of the major interval.
     apply_pressure_grid(ax,*ax.get_ylim())
     apply_engineering_grid(ax,show_grid)
     ax.tick_params(labelsize=9)
@@ -301,6 +299,7 @@ def graph_figure(store,sid,unit='psi',time_range=None,time_axis='Elapsed Time',s
     lo=(time_range[0]-start)/60 if time_range is not None else (rows[0]['ts']-start)/60
     hi=(time_range[1]-start)/60 if time_range is not None else (rows[-1]['ts']-start)/60
     apply_report_time_scale(ax,lo,hi)
+    apply_pressure_grid(ax,*ax.get_ylim())
     apply_engineering_grid(ax,show_grid);fig.tight_layout()
     return fig
 
