@@ -653,6 +653,41 @@ class App(tk.Tk):
         content.pack(anchor='w',fill='x')
         # Let the canvas control page width. Avoid configuring a packed frame
         # from its parent's Configure event, which can trigger a layout loop.
+        # Lightweight, offline vector icons drawn directly by Tkinter.
+        # No image files, external packages, or network requests required.
+        def icon(parent,kind,color='#21657b'):
+            c=tk.Canvas(parent,width=30,height=30,bg=BG,highlightthickness=0)
+            kw=dict(fill='',outline=color,width=2)
+            def line(*coords):c.create_line(*coords,fill=color,width=2,capstyle='round',joinstyle='round')
+            if kind=='activity':
+                line(3,16,8,16,11,8,15,23,19,12,22,16,27,16)
+            elif kind=='database':
+                c.create_oval(5,4,25,12,**kw)
+                c.create_arc(5,4,25,23,start=180,extent=180,style='arc',outline=color,width=2)
+                line(5,8,5,23);line(25,8,25,23)
+                c.create_arc(5,18,25,28,start=180,extent=180,style='arc',outline=color,width=2)
+                c.create_arc(5,11,25,19,start=180,extent=180,style='arc',outline=color,width=2)
+            elif kind=='flag':
+                line(7,26,7,4);line(7,5,24,5,20,12,24,19,7,19)
+            elif kind=='chart':
+                line(5,4,5,25,27,25);line(8,20,14,14,19,17,26,7)
+            elif kind=='file':
+                line(7,3,19,3,25,9,25,27,7,27,7,3)
+                line(19,3,19,9,25,9);line(11,15,21,15);line(11,20,21,20)
+            elif kind=='sliders':
+                for y,x in ((7,11),(15,21),(23,14)):
+                    line(4,y,26,y)
+                    c.create_rectangle(x-3,y-4,x+3,y+4,fill=BG,outline=color,width=2)
+            elif kind=='flask':
+                line(11,3,19,3);line(13,3,13,12,5,25,7,27,23,27,25,25,17,12,17,3)
+                line(9,20,21,20)
+            elif kind=='check':
+                c.create_oval(4,4,26,26,**kw);line(9,15,13,19,21,10)
+            elif kind=='plus':
+                c.create_oval(4,4,26,26,**kw);line(15,9,15,21);line(9,15,21,15)
+            elif kind=='mail':
+                c.create_rectangle(4,7,26,23,**kw);line(4,8,15,17,26,8)
+            return c
         def section_title(text):
             ttk.Label(content,text=text,font=(UI_FONT,12,'bold')).pack(anchor='w',pady=(14,7))
         def paragraph(text,space=7):
@@ -672,13 +707,24 @@ class App(tk.Tk):
             ('Device Configuration','Configure serial port, baud rate, Modbus parameters, sampling interval, display units, and UTC offset.'),
             ('Simulation Mode','Test the monitoring and recording workflow without connecting physical hardware.'),
         ]
-        for name,description in features:
-            ttk.Label(content,text=name,font=(UI_FONT,10,'bold')).pack(anchor='w',pady=(9,3))
-            paragraph(description,4)
+        feature_icons=['activity','database','flag','chart','file','sliders','flask']
+        for (name,description),kind in zip(features,feature_icons):
+            feature_row=ttk.Frame(content)
+            feature_row.pack(fill='x',pady=(10,3))
+            icon(feature_row,kind).pack(side='left',anchor='n',padx=(0,12))
+            feature_text=ttk.Frame(feature_row)
+            feature_text.pack(side='left',fill='x',expand=True)
+            ttk.Label(feature_text,text=name,font=(UI_FONT,10,'bold')).pack(anchor='w')
+            ttk.Label(feature_text,text=description,wraplength=820,justify='left').pack(anchor='w',pady=(3,0))
         ttk.Separator(content).pack(fill='x',pady=(14,4))
         section_title('Supported devices')
-        paragraph('• Aplisens PMS-970 — Modbus RTU')
-        paragraph('• More devices coming soon. Contact the developer to request support for additional hardware.')
+        for kind,description in [
+            ('check','Aplisens PMS-970 — Modbus RTU'),
+            ('plus','More devices coming soon. Contact the developer to request support for additional hardware.'),
+        ]:
+            device_row=ttk.Frame(content);device_row.pack(fill='x',pady=4)
+            icon(device_row,kind,'#137a45' if kind=='check' else '#576677').pack(side='left',padx=(0,12))
+            ttk.Label(device_row,text=description,wraplength=820,justify='left').pack(side='left',anchor='center')
         ttk.Separator(content).pack(fill='x',pady=(14,4))
         section_title('Status key')
         for name,description,color in [
@@ -693,8 +739,10 @@ class App(tk.Tk):
         ttk.Separator(content).pack(fill='x',pady=(14,4))
         section_title('Developer & Contact')
         paragraph('Eka Yudhi Pratama')
-        paragraph('epratama2@slb.com')
-        paragraph('just_eka@ymail.com')
+        for address in ('epratama2@slb.com','just_eka@ymail.com'):
+            email_row=ttk.Frame(content);email_row.pack(fill='x',pady=2)
+            icon(email_row,'mail','#576677').pack(side='left',padx=(0,10))
+            ttk.Label(email_row,text=address).pack(side='left')
         ttk.Label(content,text='Digital Pressure Recorder  •  Version 1.0  •  November 2026').pack(anchor='w',pady=(15,10))
 
     def find_ports(self):
