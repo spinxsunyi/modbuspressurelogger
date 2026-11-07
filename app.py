@@ -552,7 +552,7 @@ class App(tk.Tk):
     def make_reporting(self):
         p=self.pages['Reporting']
         ttk.Label(p,text='Reporting',style='Title.TLabel').pack(anchor='w',pady=(0,10))
-        navigation=ttk.Frame(p);navigation.pack(fill='x',pady=(0,12))
+        navigation=ttk.Frame(p);navigation.pack(fill='x',pady=(0,6))
         self.report_step=1
         self.report_step_buttons=[]
         for number,name in enumerate(('1. Select Record','2. Select Interval','3. Preview & Export'),1):
@@ -560,6 +560,10 @@ class App(tk.Tk):
                              command=lambda n=number:self.show_report_step(n))
             button.pack(side='left',padx=(0,10))
             self.report_step_buttons.append(button)
+        self.report_continue_interval=ttk.Button(navigation,text='Continue to Preview & Export  >',
+                    style='Compact.TButton',command=lambda:self.show_report_step(3))
+        self.report_continue_interval.pack(side='right',padx=(4,0))
+        self.report_continue_interval.pack_forget()
         self.report_steps=[ttk.Frame(p) for _ in range(3)]
         self.reporting_record=tk.StringVar(value='No recording selected')
 
@@ -617,11 +621,6 @@ class App(tk.Tk):
 
         # Step 2: combined time interval and graph appearance.
         two=self.report_steps[1]
-        # Keep the next-step action outside the options frame to preserve chart height.
-        step2_header=ttk.Frame(two)
-        step2_header.pack(fill='x',pady=(0,6))
-        ttk.Button(step2_header,text='Continue to Preview & Export  >',style='Accent.TButton',
-                   command=lambda:self.show_report_step(3)).pack(side='right')
         section=ttk.LabelFrame(two,text='Step 2 — Select Interval & Graph Options',padding=14)
         section.pack(fill='both',expand=True,pady=(0,8))
         self.report_start=tk.StringVar(value='0')
@@ -928,6 +927,8 @@ class App(tk.Tk):
         for frame in self.report_steps:frame.pack_forget()
         self.report_step=step
         self.report_steps[step-1].pack(fill='both',expand=True)
+        if step==2:self.report_continue_interval.pack(side='right',padx=(4,0))
+        else:self.report_continue_interval.pack_forget()
         for index,button in enumerate(self.report_step_buttons,1):
             active=index==step
             button.configure(bg=TEAL if active else SURFACE,fg='white' if active else INK,
