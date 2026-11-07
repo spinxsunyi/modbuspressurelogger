@@ -80,6 +80,19 @@ try:
     a.engine.send('drop',True);pump(.7);assert a.latest['quality']=='TIMEOUT'
     a.engine.send('drop',False);pump(.7);assert a.latest['quality']=='OK'
     a.show('History');pump(.3);assert a.sid==sid
+    assert a.history_open.cget('state')=='disabled'
+    assert len(a.history.get_children())>=1
+    assert 'recording' in a.history_count.cget('text')
+    a.history.selection_set(sid)
+    a.update_history_selection()
+    assert a.history_open.cget('state')=='normal'
+    assert a.history_selection.cget('text')=='1 recording selected'
+    a.search.set('UI TEST');a.refresh_history()
+    assert sid in a.history.get_children()
+    assert 'found' in a.history_count.cget('text')
+    a.clear_history_search()
+    assert not a.search.get()
+    assert sid in a.history.get_children()
     a.show('Settings');pump(.3);assert a.sid==sid
     # Settings must remain scrollable at the supported minimum window size.
     a.geometry('820x560');pump(.3)
