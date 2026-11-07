@@ -245,10 +245,10 @@ class App(tk.Tk):
                 self.viewer_scale_mode.set('Auto')
                 self.auto_history_scale()
                 self.slide_history(0)
-        labels=[('Reset',reset),('−',lambda:zoom(1.5)),('+',lambda:zoom(2/3)),('✥',tools.pan)]
+        labels=[('Reset',reset),('−',lambda:zoom(1.5)),('+',lambda:zoom(2/3)),('✥ Pan' if live else '✥',tools.pan)]
         for label,cmd in labels:
             ttk.Button(bar,text=label,command=cmd,style='Compact.TButton',
-                       width=4 if label=='✥' else (6 if label!='Reset' else 7)).pack(side='right',padx=2)
+                       width=7 if label=='✥ Pan' else (4 if label=='✥' else (6 if label!='Reset' else 7))).pack(side='right',padx=2)
 
     def auto_history_scale(self):
         valid=[r['value'] for r in self.vrows if r['quality']=='OK' and r['value'] is not None]
