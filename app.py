@@ -651,7 +651,7 @@ class App(tk.Tk):
 
         self.viewer_bottom=ttk.Frame(p)
         self.viewer_bottom.pack(side='bottom',fill='x',pady=(4,0))
-        self.viewer_bottom_toggle=ttk.Button(self.viewer_bottom,text='▾ Details & Annotations',
+        self.viewer_bottom_toggle=ttk.Button(self.viewer_bottom,text='Hide detail and annotation',
                                              style='Compact.TButton',command=self.toggle_viewer_panel)
         self.viewer_bottom_toggle.pack(anchor='w')
         self.viewer_bottom_content=ttk.Frame(self.viewer_bottom)
@@ -708,10 +708,10 @@ class App(tk.Tk):
         content=self.viewer_bottom_content
         if content.winfo_manager():
             content.pack_forget()
-            self.viewer_bottom_toggle.configure(text='▸ Details & Annotations')
+            self.viewer_bottom_toggle.configure(text='Show detail and annotation')
         else:
             content.pack(fill='x',pady=(4,0))
-            self.viewer_bottom_toggle.configure(text='▾ Details & Annotations')
+            self.viewer_bottom_toggle.configure(text='Hide detail and annotation')
 
     def load_viewer(self,sid):
         if not sid:return
