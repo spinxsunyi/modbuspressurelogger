@@ -83,6 +83,15 @@ class TimeScrollbar(ttk.Scrollbar):
         super().set(start,end)
 
 
+def apply_engineering_grid(ax, visible=True):
+    """Barton-style major/minor grid, adaptive to the current axis scale."""
+    from matplotlib.ticker import AutoMinorLocator
+    ax.xaxis.set_minor_locator(AutoMinorLocator(5))
+    ax.yaxis.set_minor_locator(AutoMinorLocator(5))
+    ax.grid(visible=visible, which='major', color='#8d98a3', alpha=.30, linewidth=.8)
+    ax.grid(visible=visible, which='minor', color='#aab4bd', alpha=.16, linewidth=.45)
+    ax.set_axisbelow(True)
+
 class App(tk.Tk):
     def __init__(self):
         super().__init__(); self.title('Digital Pressure Recorder 1.0'); set_window_icon(self); self.geometry(f'{min(1440,self.winfo_screenwidth()-40)}x{min(900,self.winfo_screenheight()-100)}'); self.minsize(820,560); self.state('zoomed') if os.name=='nt' else None
@@ -332,7 +341,7 @@ class App(tk.Tk):
         ttk.Radiobutton(toolbar,text='Manual scale',value='Manual',variable=self.scale_mode,command=self.select_live_scale).pack(side='left',padx=(5,0))
         ttk.Button(toolbar,text='Manual scale options',style='Compact.TButton',command=self.show_live_options).pack(side='left',padx=(8,0))
         ttk.Button(top,text='Details +/−',style='Compact.TButton',command=self.toggle_details).pack(side='right',padx=10)
-        self.lfig,self.lax,self.lcanvas=self.plot(main); self.lax.set(xlabel='Time',ylabel='Pressure'); self.lax.grid(alpha=.2)
+        self.lfig,self.lax,self.lcanvas=self.plot(main); self.lax.set(xlabel='Time',ylabel='Pressure'); apply_engineering_grid(self.lax)
         self.line,=self.lax.plot([],[],color='#008b92',lw=1.2)
         self.lcanvas.mpl_connect('button_press_event',lambda e:self.follow.set(False) if e.inaxes else None)
         self.chart_tools(self.lcanvas,main,True)
@@ -1115,7 +1124,7 @@ class App(tk.Tk):
         ax.set_ylabel('Pressure ('+self.report_unit.get()+')')
         ax.set_xlabel('Elapsed time (minutes)')
         ax.xaxis.set_major_locator(MaxNLocator(9))
-        ax.grid(alpha=.2)
+        apply_engineering_grid(ax)
         self.report_graph_events=self.store.events(sid)
         self.populate_report_events(sid)
         self.report_graph_event_artists=[]
@@ -1298,7 +1307,7 @@ class App(tk.Tk):
             ax.xaxis.set_major_formatter(FuncFormatter(lambda x,pos:f'{x:g}'))
             ax.set_xlabel('Elapsed time (minutes)')
         ax.xaxis.set_major_locator(MaxNLocator(8))
-        ax.grid(visible=self.report_grid.get(),alpha=.2)
+        apply_engineering_grid(ax, self.report_grid.get())
         ax.relim()
         if not self.report_ymin.get().strip() and not self.report_ymax.get().strip():
             ax.autoscale(axis='y')
@@ -1806,7 +1815,7 @@ class App(tk.Tk):
                ylabel='Pressure ('+self.settings['unit']+')',
                xlim=(v['xmin'],v['xmax']),ylim=(v['ymin'],v['ymax']))
         ax.yaxis.set_major_formatter(FuncFormatter(lambda p,pos:f'{from_psi(p,self.settings["unit"]):,.1f}'))
-        ax.grid(alpha=.2)
+        apply_engineering_grid(ax)
         if self.viewer_time_display.get()=='Date & time':
             from datetime import datetime,timezone,timedelta
             date=datetime.fromtimestamp(start+v['xmin']*60,timezone(timedelta(hours=self.settings['utc_offset']))).strftime('%d %b %Y')
