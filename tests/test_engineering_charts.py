@@ -67,6 +67,8 @@ def test_live_and_history_tick_positions(window,major,minor):
     from chart_scale import apply_window_time_grid, apply_engineering_grid
     for units, factor in [('seconds',1),('minutes',1/60)]:
         ax=Figure().add_subplot(111)
+        from chart_scale import WINDOWS
+        ax.set_xlim(0,WINDOWS[window][0]*factor)
         assert apply_window_time_grid(ax,window,units=units)
         apply_engineering_grid(ax)
         assert isinstance(ax.xaxis.get_major_locator(),MultipleLocator)
