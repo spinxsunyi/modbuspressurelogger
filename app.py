@@ -427,13 +427,13 @@ class App(tk.Tk):
         sid=chosen[0]
         session=self.store.get(sid)
         if not session:return
-        if session['state']=='Recording' or sid==getattr(self,'record_sid',None):
+        if session['state']=='Recording' or sid==self.sid:
             messagebox.showwarning('Delete recording','Stop recording before deleting this session.',parent=self)
             return
         details=json.loads(session['details'])
         name=(details.get('well') or session['name'])
         if not messagebox.askyesno('Delete recording',
-                f'Permanently delete recording "{name}"?\\n\\n'
+                f'Permanently delete recording "{name}"?\n\n'
                 'All pressure samples and annotations in this recording will be deleted. '
                 'This cannot be undone.',icon='warning',parent=self):
             return
@@ -755,7 +755,7 @@ class App(tk.Tk):
         if event is None:return
         when=stamp(event['ts'],self.settings['utc_offset'])[11:19]
         if not messagebox.askyesno('Delete annotation',
-                f'Delete annotation "{event["label"]}" at {when}?\\n\\n'
+                f'Delete annotation "{event["label"]}" at {when}?\n\n'
                 'This cannot be undone.',icon='warning',parent=self):
             return
         try:
