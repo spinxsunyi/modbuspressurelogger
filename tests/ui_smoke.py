@@ -15,6 +15,7 @@ simpledialog.askstring=lambda *a,**k:'Smoke-test event'
 a=App()
 a.settings['mode']='Simulation'
 a.settings['interval']=.1
+a.connect()  # Default production mode is Modbus; smoke test explicitly selects simulation.
 a.report_callback_exception=lambda *exc:errors.append(''.join(traceback.format_exception(*exc)))
 def pump(seconds=.5):
     until=time.monotonic()+seconds
