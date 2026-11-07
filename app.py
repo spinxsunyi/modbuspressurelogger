@@ -601,12 +601,19 @@ class App(tk.Tk):
         self.settings_device=grid;self.settings_display=display;self.settings_actions=actions
         grid.columnconfigure(1,weight=1);display.columnconfigure(1,weight=1)
         self.config_vars={}
-        choices={'mode':['Simulation','Modbus RTU'],'baud':[2400,4800,9600,19200],'parity':['E','N','O'],'stopbits':[1,2],'interval':[.5,1,.2,.1],'unit':['psi','bar','kPa','MPa'],'utc_offset':[7,8,0]}
+        self.utc_offset_labels={
+            7:'UTC+7 — WIB (Jakarta)',
+            8:'UTC+8 — WITA (Balikpapan)',
+            9:'UTC+9 — WIT (Jayapura)',
+            0:'UTC+0 — UTC (Universal Time)',
+        }
+        choices={'mode':['Simulation','Modbus RTU'],'baud':[2400,4800,9600,19200],'parity':['E','N','O'],'stopbits':[1,2],'interval':[.5,1,.2,.1],'unit':['psi','bar','kPa','MPa'],'utc_offset':list(self.utc_offset_labels.values())}
         for n,k in enumerate(['mode','port','baud','parity','stopbits','address','interval','unit','utc_offset']):
             parent=grid if n<6 else display
             row=n if n<6 else n-6
             ttk.Label(parent,text={'utc_offset':'UTC offset','interval':'Interval (seconds)','baud':'Baud rate','stopbits':'Stop bits'}.get(k,k.title())).grid(row=row,column=0,sticky='w',padx=(0,12),pady=5)
-            v=tk.StringVar(value=str(self.settings[k])); self.config_vars[k]=v
+            initial=(self.utc_offset_labels.get(int(float(self.settings[k])),str(self.settings[k])) if k=='utc_offset' else str(self.settings[k]))
+            v=tk.StringVar(value=initial); self.config_vars[k]=v
             if k=='port':
                 en=ttk.Combobox(parent,textvariable=v,state='readonly',width=30); self.port_combo=en
             elif k in choices:en=ttk.Combobox(parent,textvariable=v,values=choices[k],state='readonly',width=30)
@@ -655,7 +662,8 @@ class App(tk.Tk):
             s={k:v.get() for k,v in self.config_vars.items()}
             s['port']=s['port'].split(' — ',1)[0]
             for k in ['baud','stopbits','address']:s[k]=int(s[k])
-            for k in ['interval','utc_offset']:s[k]=float(s[k])
+            s['interval']=float(s['interval'])
+            s['utc_offset']=next(offset for offset,label in self.utc_offset_labels.items() if label==s['utc_offset'])
             if not 1<=s['address']<=247:raise ValueError('Slave address must be 1-247')
             if s['mode']=='Modbus RTU' and not s['port']:raise ValueError('Specify a COM port')
             s['auto_connect']=self.auto.get(); tmp=DATA/'settings.tmp'; tmp.write_text(json.dumps(s,indent=2)); tmp.replace(DATA/'settings.json')
