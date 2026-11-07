@@ -90,7 +90,7 @@ class App(tk.Tk):
         try: self.settings.update(json.loads((DATA/'settings.json').read_text()))
         except (OSError,ValueError): pass
         self.store=Store(DATA/'recordings.sqlite'); self.store.recover(); self.engine=Engine(self.store); self.engine.start()
-        self.sid=None; self.detail_sid=None; self.connected=False; self.latest=None; self.connection_generation=0; self.connection_pending=False; self.connect_started=0; self.retired_engines=[]; self.buffer=deque(maxlen=7200); self.viewer_sid=None
+        self.sid=None; self.detail_sid=None; self.connected=False; self.latest=None; self.connection_generation=0; self.connection_pending=False; self.connect_started=0; self.retired_engines=[]; self.simulation_recovery_attempted=False; self.buffer=deque(maxlen=7200); self.viewer_sid=None
         self.save_job=None; self.edit_loading=False; self.closing=False; self._shutdown_complete=False; self._tick_after_id=None; self.shutdown_warning_shown=False; self.last_plot=0; self.rec_count=0; self.rec_errors=0; self.pending=False; self.details_user_visible=True
         self.configure(bg=BG); style=ttk.Style(self); style.theme_use('clam')
         style.configure('.',font=(UI_FONT,10),background=BG,foreground=INK)
@@ -367,6 +367,7 @@ class App(tk.Tk):
         self.connection_generation+=1
         self.connection_pending=True
         self.connect_started=time.monotonic()
+        self.simulation_recovery_attempted=False
         self.connected=False
         self.latest=None
         self.buffer.clear()
@@ -1057,12 +1058,13 @@ class App(tk.Tk):
         self._tick_after_id=self.after(80,self.tick)
     def _check_connection_watchdog(self):
         """Recover a stalled Modbus-to-Simulation switch without blocking Tk."""
-        if not self.connection_pending or self.settings['mode']!='Simulation':
+        if not self.connection_pending or self.settings['mode']!='Simulation' or self.simulation_recovery_attempted:
             return
         if time.monotonic()-self.connect_started<2.5:
             return
         if self.sid or self.pending:
             return  # Never abandon a worker that may be saving a recording.
+        self.simulation_recovery_attempted=True
         old=self.engine
         # A blocked serial read cannot be interrupted safely on every Windows driver.
         # Queue retirement, then run the independent simulator on a fresh worker.
