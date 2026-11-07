@@ -77,13 +77,16 @@ class App(tk.Tk):
         style.configure('.',font=(UI_FONT,10),background=BG,foreground=INK)
         style.configure('TFrame',background=BG)
         style.configure('TLabel',background=BG,foreground=INK)
-        style.configure('TButton',padding=(12,8),background='#edf2f6',foreground=INK,borderwidth=1)
+        # Compact is the default for routine controls throughout the application.
+        style.configure('TButton',padding=(6,3),font=(UI_FONT,9),background='#edf2f6',foreground=INK,borderwidth=1)
         style.configure('Compact.TButton',padding=(6,3),font=(UI_FONT,9),background='#edf2f6',foreground=INK,borderwidth=1)
         style.map('Compact.TButton',background=[('pressed','#cddde7'),('active','#dce8ef')])
         style.map('TButton',background=[('pressed','#cddde7'),('active','#dce8ef')])
         style.configure('Accent.TButton',background=TEAL,foreground='white',padding=(14,9),font=(UI_FONT,10,'bold'))
         style.map('Accent.TButton',background=[('pressed',TEAL_DARK),('active',TEAL_DARK)],
                   foreground=[('disabled','#6d818b'),('!disabled','white')])
+        style.configure('Record.TButton',background='#d52e36',foreground='white',padding=(14,9),font=(UI_FONT,10,'bold'))
+        style.map('Record.TButton',background=[('pressed','#a91d27'),('active','#bd232e')],foreground=[('!disabled','white')])
         style.configure('Stop.TButton',background='#d52e36',foreground='white',padding=(14,9),font=(UI_FONT,10,'bold'))
         style.map('Stop.TButton',background=[('pressed','#a91d27'),('active','#bd232e')])
         style.configure('Section.TLabel',background=NAVY,foreground='white',padding=(12,8),font=(UI_FONT,11,'bold'))
@@ -167,7 +170,7 @@ class App(tk.Tk):
     def make_live(self):
         p=self.pages['Live Monitor']; top=ttk.Frame(p); top.pack(fill='x')
         self.connection=ttk.Label(top,text='Waiting for device'); self.connection.pack(side='left')
-        self.connect_btn=ttk.Button(top,text='Connect',command=self.toggle_connect); self.connect_btn.pack(side='left',padx=12)
+        self.connect_btn=ttk.Button(top,text='Connect',style='Compact.TButton',command=self.toggle_connect); self.connect_btn.pack(side='left',padx=12)
         self.drop=tk.BooleanVar(); ttk.Checkbutton(top,text='Simulate disconnect',variable=self.drop,command=lambda:self.engine.send('drop',self.drop.get())).pack(side='right')
         body=ttk.Panedwindow(p,orient='horizontal'); body.pack(fill='both',expand=True,pady=(7,4))
         main=ttk.Frame(body); self.details_panel=ttk.LabelFrame(body,text='Recording details  |  autosaved',padding=10); body.add(main,weight=5); body.add(self.details_panel,weight=1); self.live_pane=body
@@ -210,7 +213,7 @@ class App(tk.Tk):
         self.lcanvas.mpl_connect('button_press_event',lambda e:self.follow.set(False) if e.inaxes else None)
         self.chart_tools(self.lcanvas,main,True)
         controls=ttk.Frame(main); controls.pack(side='bottom',before=readings,fill='x',pady=(3,2))
-        self.record_btn=ttk.Button(controls,text='Start recording',style='Accent.TButton',command=self.record); self.record_btn.pack(side='left')
+        self.record_btn=ttk.Button(controls,text='⏺ Start recording',style='Record.TButton',command=self.record); self.record_btn.pack(side='left')
         self.event_btn=ttk.Button(controls,text='+ Add Event',style='Compact.TButton',command=self.add_live_event,state='disabled'); self.event_btn.pack(side='left',padx=10)
         self.rec_label=ttk.Label(controls,text='Preview only  |  not saved'); self.rec_label.pack(side='left')
         self.detail_vars={}; self.detail_entries=[]
@@ -509,9 +512,9 @@ class App(tk.Tk):
                 elif kind=='connected':self.connected=True;self.connection.config(text=d['settings']['mode']+'  |  '+(d['settings']['port'] or 'virtual sensor'));self.connect_btn.config(text='Disconnect')
                 elif kind=='disconnected':self.connected=False;self.connection.config(text='Disconnected');self.connect_btn.config(text='Connect');self.reading_status.config(text='STALE  |  disconnected');self.latest=None
                 elif kind=='started':
-                    self.last_recording=d['sid'];self.sid=d['sid'];self.pending=False;self.rec_started=time.monotonic();self.rec_count=0;self.rec_errors=0;self.record_btn.config(text='Stop recording',style='Stop.TButton',state='normal');self.event_btn.config(state='normal');self.load_details(self.sid)
+                    self.last_recording=d['sid'];self.sid=d['sid'];self.pending=False;self.rec_started=time.monotonic();self.rec_count=0;self.rec_errors=0;self.record_btn.config(text='■ Stop Recording',style='Stop.TButton',state='normal');self.event_btn.config(state='normal');self.load_details(self.sid)
                 elif kind in ('stopped','storage_error'):
-                    self.sid=None;self.pending=False;self.record_btn.config(text='Start recording',style='Accent.TButton',state='normal');self.event_btn.config(state='disabled');self.rec_label.config(text='Preview only  |  not saved')
+                    self.sid=None;self.pending=False;self.record_btn.config(text='⏺ Start recording',style='Record.TButton',state='normal');self.event_btn.config(state='disabled');self.rec_label.config(text='Preview only  |  not saved')
                     if kind=='storage_error':messagebox.showerror('RECORDING STOPPED - storage failure',d['text'])
                 elif kind=='exported':self.exporting=False;self.footer.config(text='Export saved: '+d['path'])
                 elif kind=='export_error':self.exporting=False;messagebox.showerror('Export failed',d['text'])
@@ -550,6 +553,16 @@ class App(tk.Tk):
         self.bind('<Configure>', self.adapt_width, add='+')
         self.live_min=tk.StringVar(value='0');self.live_max=tk.StringVar(value='3000');self.live_auto=tk.BooleanVar(value=True)
         self.live_labels=tk.BooleanVar(value=True)
+        # Manual limits and Auto scale are always visible, directly above the graph.
+        scale_bar=ttk.Frame(self.lcanvas.get_tk_widget().master)
+        scale_bar.pack(before=self.lcanvas.get_tk_widget(),fill='x',pady=(0,3))
+        ttk.Label(scale_bar,text='Pressure min').pack(side='left')
+        ttk.Entry(scale_bar,textvariable=self.live_min,width=8).pack(side='left',padx=(4,10))
+        ttk.Label(scale_bar,text='Pressure max').pack(side='left')
+        ttk.Entry(scale_bar,textvariable=self.live_max,width=8).pack(side='left',padx=(4,8))
+        ttk.Button(scale_bar,text='Apply',style='Compact.TButton',command=self.apply_live_scale).pack(side='left')
+        ttk.Checkbutton(scale_bar,text='Auto scale',variable=self.live_auto,
+                        command=self.toggle_live_auto_scale).pack(side='left',padx=(12,0))
         self.live_slider=TimeScrollbar(self.lcanvas.get_tk_widget().master,self.slide_live)
         self.live_slider.pack(after=self.lcanvas.get_tk_widget(),fill='x')
         self.live_events=ttk.Treeview(self.lcanvas.get_tk_widget().master,columns=('time','event'),show='headings',height=2)
@@ -661,15 +674,17 @@ class App(tk.Tk):
         win.resizable(False,False)
         self.live_options=win
         body=ttk.Frame(win,padding=16);body.pack(fill='both',expand=True)
-        for i,(name,var) in enumerate((('Pressure min',self.live_min),('Pressure max',self.live_max))):
-            ttk.Label(body,text=name).grid(row=i,column=0,sticky='w',pady=4,padx=(0,12))
-            ttk.Entry(body,textvariable=var,width=13).grid(row=i,column=1,sticky='ew',pady=4)
-        ttk.Checkbutton(body,text='Auto pressure scale',variable=self.live_auto,
-                        command=lambda:self.lax.set_autoscaley_on(self.live_auto.get())).grid(row=2,column=0,columnspan=2,sticky='w',pady=6)
+        ttk.Label(body,text='Display',font=(UI_FONT,10,'bold')).pack(anchor='w',pady=(0,8))
         ttk.Checkbutton(body,text='Show event labels',variable=self.live_labels,
-                        command=self.paint_live_events).grid(row=3,column=0,columnspan=2,sticky='w',pady=6)
-        ttk.Button(body,text='Apply scale',command=self.apply_live_scale).grid(row=4,column=0,sticky='ew',pady=(8,0))
-        ttk.Button(body,text='Close',command=win.destroy).grid(row=4,column=1,sticky='ew',pady=(8,0))
+                        command=self.paint_live_events).pack(anchor='w',pady=(0,10))
+        ttk.Button(body,text='Close',style='Compact.TButton',command=win.destroy).pack(anchor='e')
+
+    def toggle_live_auto_scale(self):
+        self.lax.set_autoscaley_on(self.live_auto.get())
+        if self.live_auto.get():
+            self.lax.relim()
+            self.lax.autoscale_view(scaley=True)
+        self.lcanvas.draw_idle()
 
     def apply_live_scale(self):
         try:
