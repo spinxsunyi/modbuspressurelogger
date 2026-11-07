@@ -970,15 +970,19 @@ class App(tk.Tk):
                 ttk.Label(self.reporting_preview,text=description,
                           foreground='#576677').pack(padx=24,pady=(0,48))
                 return
-            fig=report_figure(self.store,sid,self.report_unit.get(),time_range,
-                              self.report_axis.get(),self.report_events.get(),
-                              self.report_grid.get(),y_limits)
-            canvas=FigureCanvasTkAgg(fig,master=self.reporting_preview)
-            widget=canvas.get_tk_widget()
-            widget.pack(padx=12,pady=12)
-            self.reporting_figure=fig
-            self.reporting_figure_canvas=canvas
-            canvas.draw()
+            pages=report_figures(self.store,sid,self.report_unit.get(),time_range,
+                                 self.report_axis.get(),self.report_events.get(),
+                                 self.report_grid.get(),y_limits)
+            self.reporting_figure=pages[0]
+            self.reporting_figure_canvas=None
+            for page_number,fig in enumerate(pages,1):
+                if page_number>1:
+                    ttk.Label(self.reporting_preview,text=f'Page {page_number} of {len(pages)}',
+                              font=(UI_FONT,10,'bold')).pack(pady=(14,0))
+                canvas=FigureCanvasTkAgg(fig,master=self.reporting_preview)
+                canvas.get_tk_widget().pack(padx=12,pady=12)
+                if page_number==1:self.reporting_figure_canvas=canvas
+                canvas.draw()
         except Exception as exc:
             ttk.Label(self.reporting_preview,text='Preview unavailable: '+str(exc)).pack(pady=30)
 
