@@ -11,7 +11,8 @@ from units import from_psi,to_psi
 from instance import InstanceLock
 from exports import export,stamp
 from report_page import report_figure,report_figures,graph_figure,report_name
-from app_icon import set_window_icon
+from app_icon import set_window_icon, gauge_image
+from PIL import ImageTk
 
 UI_FONT='Segoe UI' if os.name=='nt' else 'Helvetica'
 NAVY = '#17334c'
@@ -146,7 +147,9 @@ class App(tk.Tk):
         style.configure('TLabelframe',background=BG,relief='solid',borderwidth=1)
         style.configure('TLabelframe.Label',font=(UI_FONT,11,'bold'),foreground=NAVY,background=BG)
         nav=tk.Frame(self,bg='#17334c'); nav.pack(fill='x')
-        self.brand=tk.Label(nav,text='Digital Pressure Recorder',font=(UI_FONT,15,'bold'),bg=NAVY,fg='white',padx=12,pady=2); self.brand.pack(side='left')
+        self.header_logo=ImageTk.PhotoImage(gauge_image(30),master=self)
+        tk.Label(nav,image=self.header_logo,bg=NAVY,padx=0,pady=0).pack(side='left',padx=(12,4))
+        self.brand=tk.Label(nav,text='Digital Pressure Recorder',font=(UI_FONT,15,'bold'),bg=NAVY,fg='white',padx=4,pady=2); self.brand.pack(side='left')
         self.nav_buttons={}
         for page in ['Live Monitor','History','Reporting','Settings','About']:
             button=tk.Button(nav,text=page,command=lambda p=page:self.show(p),bg=NAVY,fg='white',activebackground=TEAL_DARK,activeforeground='white',relief='flat',bd=0,padx=10,pady=2,font=(UI_FONT,9))
