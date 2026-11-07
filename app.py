@@ -135,8 +135,7 @@ class App(tk.Tk):
             bar=self.live_toolbar
             self.live_chart_tools=bar
         else:
-            bar=ttk.Frame(parent)
-            bar.pack(side='bottom',fill='x')
+            bar=self.viewer_toolbar
         def zoom(factor):
             ax=canvas.figure.axes[0]
             lo,hi=ax.get_xlim()
@@ -153,12 +152,13 @@ class App(tk.Tk):
                 self.lax.set_autoscaley_on(True)
             else:
                 self.history_window.set('Buffer data')
+                self.viewer_scale_mode.set('Auto')
                 self.auto_history_scale()
                 self.slide_history(0)
-        labels=[('Reset',reset),('−',lambda:zoom(1.5)),('+',lambda:zoom(2/3)),('Pan',tools.pan)] if live else [('Reset view',reset),('Zoom −',lambda:zoom(1.5)),('Zoom +',lambda:zoom(2/3)),('Pan',tools.pan)]
+        labels=[('Reset',reset),('−',lambda:zoom(1.5)),('+',lambda:zoom(2/3)),('Pan',tools.pan)]
         for label,cmd in labels:
-            options={'style':'Compact.TButton','width':6} if live else {}
-            ttk.Button(bar,text=label,command=cmd,**options).pack(side='right',padx=2)
+            ttk.Button(bar,text=label,command=cmd,style='Compact.TButton',
+                       width=6 if label!='Reset' else 7).pack(side='right',padx=2)
 
     def auto_history_scale(self):
         valid=[r['value'] for r in self.vrows if r['quality']=='OK' and r['value'] is not None]
@@ -469,47 +469,103 @@ class App(tk.Tk):
             self.settings=s; self.buffer.clear(); self.latest=None; self.connect(); self.show('Live Monitor')
         except Exception as e:messagebox.showerror('Settings',str(e))
     def make_viewer(self):
-        p=self.pages['Viewer']; top=ttk.Frame(p); top.pack(fill='x'); ttk.Button(top,text='< History',command=lambda:self.show('History')).pack(side='left')
-        self.viewer_title=ttk.Label(top,text='Recording Viewer',style='Title.TLabel'); self.viewer_title.pack(side='left',padx=12)
-        ttk.Button(top,text='Refresh',command=lambda:self.load_viewer(self.viewer_sid)).pack(side='right')
-        body=ttk.Panedwindow(p,orient='horizontal'); body.pack(fill='both',expand=True,pady=8); left=ttk.Frame(body); side=ttk.Frame(body); body.add(left,weight=4); body.add(side,weight=1)
-        scroll=tk.Canvas(side,width=285,bg=BG,highlightthickness=0); sb=ttk.Scrollbar(side,orient='vertical',command=scroll.yview)
-        self.viewer_sidebar_canvas=scroll
-        sb.pack(side='right',fill='y');scroll.pack(side='left',fill='both',expand=True);scroll.configure(yscrollcommand=sb.set)
-        right=ttk.Frame(scroll,padding=10); item=scroll.create_window((0,0),window=right,anchor='nw')
-        right.bind('<Configure>',lambda e:scroll.configure(scrollregion=scroll.bbox('all')))
-        scroll.bind('<Configure>',lambda e:scroll.itemconfigure(item,width=e.width))
-        self.vfig,self.vax,self.vcanvas=self.plot(left); self.chart_tools(self.vcanvas,left,False)
+        p=self.pages['Viewer']
+        top=ttk.Frame(p);top.pack(fill='x',pady=(0,7))
+        ttk.Button(top,text='‹ History',style='Compact.TButton',
+                   command=lambda:self.show('History')).pack(side='left')
+        self.viewer_title=ttk.Label(top,text='Recording Viewer',style='Title.TLabel')
+        self.viewer_title.pack(side='left',padx=12)
+        ttk.Button(top,text='Refresh',style='Compact.TButton',
+                   command=lambda:self.load_viewer(self.viewer_sid)).pack(side='right')
+
+        strip=ttk.Frame(p,padding=(10,7),relief='solid',borderwidth=1)
+        strip.pack(fill='x',pady=(0,8))
+        self.viewer_summary_vars={}
+        summary_fields=(('min','Min pressure'),('max','Max pressure'),
+                        ('start','Start'),('stop','Stop'),('duration','Duration'),('size','File size'))
+        for index,(key,label) in enumerate(summary_fields):
+            strip.columnconfigure(index,weight=1)
+            cell=ttk.Frame(strip);cell.grid(row=0,column=index,sticky='ew',padx=(5,7))
+            ttk.Label(cell,text=label+':',font=(UI_FONT,9),foreground='#576677').pack(side='left')
+            var=tk.StringVar(value='—')
+            self.viewer_summary_vars[key]=var
+            ttk.Label(cell,textvariable=var,font=(UI_FONT,10,'bold')).pack(side='left',padx=(5,0))
+
+        self.viewer_toolbar=ttk.Frame(p);toolbar=self.viewer_toolbar
+        toolbar.pack(fill='x',pady=(0,7))
+        self.history_window=tk.StringVar(value='Buffer data')
+        ttk.Label(toolbar,text='Window').pack(side='left')
+        time_box=ttk.Combobox(toolbar,textvariable=self.history_window,
+                             values=['1 min','5 min','10 min','15 min','30 min','1 hour','Buffer data'],
+                             state='readonly',width=10)
+        time_box.pack(side='left',padx=(5,12))
+        time_box.bind('<<ComboboxSelected>>',lambda e:self.slide_history(0))
+        ttk.Label(toolbar,text='Time display').pack(side='left')
+        self.viewer_time_display=tk.StringVar(value='Date & time')
+        time_display=ttk.Combobox(toolbar,textvariable=self.viewer_time_display,
+                                  values=['Elapsed time','Date & time'],state='readonly',width=14)
+        time_display.pack(side='left',padx=(5,10))
+        time_display.bind('<<ComboboxSelected>>',lambda e:self.paint_viewer())
+        self.viewer_scale_mode=tk.StringVar(value='Auto')
+        ttk.Radiobutton(toolbar,text='Auto scale',value='Auto',variable=self.viewer_scale_mode,
+                        command=self.select_viewer_scale).pack(side='left',padx=(0,5))
+        ttk.Radiobutton(toolbar,text='Manual scale',value='Manual',variable=self.viewer_scale_mode,
+                        command=self.select_viewer_scale).pack(side='left')
+        ttk.Button(toolbar,text='Manual scale options',style='Compact.TButton',
+                   command=self.show_viewer_scale_options).pack(side='left',padx=(8,0))
+
+        bottom=ttk.Frame(p);bottom.pack(side='bottom',fill='x',pady=(8,0))
+        bottom.columnconfigure(0,weight=1,uniform='bottom')
+        bottom.columnconfigure(1,weight=1,uniform='bottom')
+        details=ttk.LabelFrame(bottom,text='Job details',padding=8)
+        details.grid(row=0,column=0,sticky='nsew',padx=(0,7))
+        annotations=ttk.LabelFrame(bottom,text='Annotations',padding=8)
+        annotations.grid(row=0,column=1,sticky='nsew',padx=(7,0))
+        details.columnconfigure(0,weight=1);details.columnconfigure(1,weight=1)
+        self.viewer_details=ttk.Label(details,text='—',justify='left',anchor='nw')
+        self.viewer_details.grid(row=0,column=0,sticky='nw',padx=(4,12),pady=(2,6))
+        self.viewer_details_right=ttk.Label(details,text='—',justify='left',anchor='nw')
+        self.viewer_details_right.grid(row=0,column=1,sticky='nw',padx=(4,0),pady=(2,6))
+        ttk.Button(details,text='Edit job details',style='Compact.TButton',
+                   command=self.edit_viewer_details).grid(row=1,column=0,columnspan=2,sticky='w')
+        actions=ttk.Frame(annotations);actions.pack(fill='x',pady=(0,5))
+        ttk.Label(actions,text='Click the chart to set annotation time',foreground='#576677').pack(side='left')
+        ttk.Button(actions,text='Edit selected',style='Compact.TButton',
+                   command=self.edit_annotation).pack(side='right',padx=(5,0))
+        ttk.Button(actions,text='+ Add annotation',style='Compact.TButton',
+                   command=self.add_annotation).pack(side='right')
+        self.events_tree=ttk.Treeview(annotations,columns=('minute','label','kind'),
+                                      show='headings',height=3,selectmode='browse')
+        for col,width in [('minute',130),('label',220),('kind',110)]:
+            self.events_tree.heading(col,text='Time' if col=='minute' else col.title())
+            self.events_tree.column(col,width=width,minwidth=70,stretch=True)
+        self.events_tree.pack(fill='x')
+        self.events_tree.bind('<Double-1>',lambda e:self.edit_annotation())
+        self.events_tree.bind('<<TreeviewSelect>>',self.select_history_event)
+        self.annotation_time=tk.StringVar(value='0')
+
+        chart=ttk.Frame(p);chart.pack(fill='both',expand=True)
+        self.vfig,self.vax,self.vcanvas=self.plot(chart)
         self.vcanvas.mpl_connect('button_press_event',self.chart_click)
-        ttk.Label(left,text='Click chart to capture annotation time. Toolbar: pan / zoom / reset.').pack(anchor='w')
-        self.events_tree=ttk.Treeview(left,columns=('minute','label','kind'),show='headings',height=4)
-        for col in ('minute','label','kind'):self.events_tree.heading(col,text='Time' if col=='minute' else col.title())
-        self.events_tree.pack(fill='x'); self.events_tree.bind('<Double-1>',lambda e:self.edit_annotation())
-        self.viewer_details=ttk.Label(right,wraplength=270,justify='left')
-        ttk.Label(right,text='Job details & report',style='Section.TLabel').pack(fill='x')
-        self.viewer_details.pack(anchor='w',pady=4)
-        self.view_vars={}
-        for k,label,default in [('title','Report title',''),('xmin','From (elapsed minutes)','0'),('xmax','To (elapsed minutes)','1'),('ymin','Pressure minimum','0'),('ymax','Pressure maximum','3000')]:
-            v=tk.StringVar(value=default); self.view_vars[k]=v
-            if k in ('ymin','ymax'): continue
-            ttk.Label(right,text=label).pack(anchor='w'); ttk.Entry(right,textvariable=v,width=26).pack(fill='x',pady=(2,8))
-        ttk.Button(right,text='Apply scale / Save view',command=self.apply_view).pack(fill='x',pady=4)
-        ttk.Button(right,text='Use current view',command=self.capture_view).pack(fill='x',pady=4)
-        ttk.Button(right,text='Edit job details',command=self.edit_viewer_details).pack(fill='x',pady=4)
-        ttk.Separator(right).pack(fill='x',pady=12)
-        ttk.Label(right,text='Annotations',style='Section.TLabel').pack(fill='x')
-        ttk.Button(right,text='Edit selected',command=self.edit_annotation).pack(fill='x')
-        self.annotation_time=tk.StringVar(value='0'); ttk.Label(right,text='Annotation time (elapsed minutes)').pack(anchor='w'); ttk.Entry(right,textvariable=self.annotation_time).pack(fill='x')
-        ttk.Button(right,text='+ Add review annotation',command=self.add_annotation).pack(fill='x',pady=6)
-        ttk.Label(right,text='Export',style='Section.TLabel').pack(fill='x')
-        self.selected_export=tk.BooleanVar(); ttk.Checkbutton(right,text='Export selected time range',variable=self.selected_export).pack(anchor='w',pady=8)
-        exports=ttk.Frame(right);exports.pack(fill='x');exports.columnconfigure((0,1),weight=1)
-        for n,fmt in enumerate(['xlsx','csv','pdf','png']):ttk.Button(exports,text='Export '+fmt.upper(),command=lambda f=fmt:self.do_export(f)).grid(row=n//2,column=n%2,sticky='ew',padx=2,pady=3)
+        self.history_slider=TimeScrollbar(chart,self.slide_history)
+        self.history_slider.pack(side='bottom',before=self.vcanvas.get_tk_widget(),fill='x')
+        self.history_labels=tk.BooleanVar(value=True)
+        # Retain export configuration for the future Reporting workspace.
+        self.selected_export=tk.BooleanVar(value=False)
+        self.view_vars={key:tk.StringVar(value=default)
+                        for key,default in [('title',''),('xmin','0'),('xmax','1'),
+                                            ('ymin','0'),('ymax','3000')]}
+        self.chart_tools(self.vcanvas,chart,False)
+
     def load_viewer(self,sid):
         if not sid:return
         self.viewer_sid=sid; self.vsession=self.store.get(sid); self.vrows=self.store.plot_rows(sid); self.vevents=self.store.events(sid)
         d=json.loads(self.vsession['details']); self.viewer_title.config(text=(d.get('well') or 'Unnamed well')+'  |  '+(d.get('job') or 'Recording'))
-        self.viewer_details.config(text='\n'.join(f'{k.replace("_"," ").title()}: {d.get(k) or "—"}' for k in ('well','job','job_id','engineer','client','job_date')))
+        self.viewer_details.config(text='\n'.join(f'{label}: {d.get(key) or "—"}' for key,label in
+                                                (('well','Well'),('job','Job'),('job_id','Job ID'),('engineer','Engineer'))))
+        self.viewer_details_right.config(text='\n'.join(f'{label}: {d.get(key) or "—"}' for key,label in
+                                                      (('client','Client'),('job_date','Job date'),('location','Location'),('notes','Notes'))))
+        self.update_viewer_summary()
         end=max(.01,((self.vrows[-1]['ts'] if self.vrows else self.vsession['started']+60)-self.vsession['started'])/60)
         vals=[r['value'] for r in self.vrows if r['value'] is not None]; maximum=max(vals) if vals else 3000
         v={'title':d.get('well') or self.vsession['name'],'xmin':0,'xmax':end,'ymin':min(0,min(vals)) if vals else 0,'ymax':max(1,maximum*1.1),**json.loads(self.vsession['view'])}
@@ -524,8 +580,16 @@ class App(tk.Tk):
         v=self.view_values(); ax=self.vax; ax.clear(); start=self.vsession['started']
         ax.plot([(r['ts']-start)/60 for r in self.vrows],[r['value'] if r['quality']=='OK' and r['value'] is not None else math.nan for r in self.vrows],color='#008b92',lw=1.1)
         from matplotlib.ticker import FuncFormatter
-        ax.xaxis.set_major_formatter(FuncFormatter(lambda x,pos:stamp(start+x*60,self.settings['utc_offset'])[11:19]))
-        ax.set(xlabel='Time',ylabel='Pressure ('+self.vsession['unit']+')',title=v['title'],xlim=(v['xmin'],v['xmax']),ylim=(v['ymin'],v['ymax'])); ax.grid(alpha=.2)
+        def time_label(x,pos):
+            if self.viewer_time_display.get()=='Elapsed time':
+                seconds=int(round(x*60))
+                return f'{seconds//60:02}:{seconds%60:02}'
+            return stamp(start+x*60,self.settings['utc_offset'])[5:19]
+        ax.xaxis.set_major_formatter(FuncFormatter(time_label))
+        ax.set(xlabel='Elapsed time (mm:ss)' if self.viewer_time_display.get()=='Elapsed time' else 'Date & time',
+               ylabel='Pressure ('+self.vsession['unit']+')',
+               xlim=(v['xmin'],v['xmax']),ylim=(v['ymin'],v['ymax']))
+        ax.grid(alpha=.2)
         for i in self.events_tree.get_children():self.events_tree.delete(i)
         for e in self.vevents:
             x=(e['ts']-start)/60; ax.axvline(x,ls='--',lw=.7,color='#bd7b1c')
@@ -533,11 +597,49 @@ class App(tk.Tk):
             self.events_tree.insert('','end',iid=str(e['id']),values=(stamp(e['ts'],self.settings['utc_offset'])[11:19],e['label'],e['kind']))
         self.vcanvas.draw_idle()
     def apply_view(self):
-        try:v=self.view_values();self.store.update(self.viewer_sid,'view',v);self.paint_viewer();self.footer.config(text='Viewer configuration saved')
+        try:v=self.view_values();self.store.update(self.viewer_sid,'view',v);self.viewer_scale_mode.set('Manual');self.paint_viewer();self.footer.config(text='Viewer configuration saved')
         except Exception as e:messagebox.showerror('Chart settings',str(e))
     def capture_view(self):
         for k,n in zip(['xmin','xmax','ymin','ymax'],[*self.vax.get_xlim(),*self.vax.get_ylim()]):self.view_vars[k].set(f'{n:.5f}')
         self.apply_view()
+    def update_viewer_summary(self):
+        if not self.viewer_sid:return
+        lo,hi=self.recording_extrema(self.viewer_sid)
+        session=self.vsession
+        begin=session['started']
+        stop=session['ended'] or self.store.stats(self.viewer_sid)['last']
+        elapsed=max(0,int((stop or begin)-begin))
+        values={'min':'—' if lo is None else f'{lo:,.2f} {session["unit"]}',
+                'max':'—' if hi is None else f'{hi:,.2f} {session["unit"]}',
+                'start':stamp(begin,self.settings['utc_offset'])[11:19],
+                'stop':stamp(stop,self.settings['utc_offset'])[11:19] if stop else '—',
+                'duration':f'{elapsed//60}m {elapsed%60:02}s',
+                # All sessions share one SQLite database: no individual file exists.
+                'size':'— (shared DB)'}
+        for name,value in values.items():self.viewer_summary_vars[name].set(value)
+
+    def select_viewer_scale(self):
+        if self.viewer_scale_mode.get()=='Auto':
+            self.auto_history_scale()
+        else:
+            self.apply_view()
+
+    def show_viewer_scale_options(self):
+        if getattr(self,'viewer_scale_dialog',None) and self.viewer_scale_dialog.winfo_exists():
+            self.viewer_scale_dialog.lift();return
+        win=tk.Toplevel(self);win.title('Manual scale options');win.transient(self)
+        win.resizable(False,False);self.viewer_scale_dialog=win
+        content=ttk.Frame(win,padding=14);content.pack(fill='both',expand=True)
+        for i,(label,key) in enumerate((('Pressure min','ymin'),('Pressure max','ymax'))):
+            ttk.Label(content,text=label).grid(row=i,column=0,sticky='w',pady=5,padx=(0,12))
+            ttk.Entry(content,textvariable=self.view_vars[key],width=14).grid(row=i,column=1,pady=5)
+        ttk.Checkbutton(content,text='Show event labels',variable=self.history_labels,
+                        command=self.paint_viewer).grid(row=2,column=0,columnspan=2,sticky='w',pady=8)
+        ttk.Button(content,text='Apply manual scale',style='Compact.TButton',
+                   command=self.apply_view).grid(row=3,column=0,columnspan=2,sticky='ew',pady=(6,3))
+        ttk.Button(content,text='Close',style='Compact.TButton',
+                   command=win.destroy).grid(row=4,column=0,columnspan=2,sticky='ew')
+
     def chart_click(self,event):
         if event.inaxes==self.vax and event.xdata is not None:self.annotation_time.set(f'{event.xdata:.5f}')
     def add_annotation(self):
@@ -639,43 +741,14 @@ class App(tk.Tk):
         self.live_event_toggle.pack(after=self.live_events,fill='x')
         self.live_events.bind('<<TreeviewSelect>>',self.select_live_event)
         self.live_events.bind('<Double-1>',self.edit_live_event)
-        viewer=self.pages['Viewer']
-        summary=ttk.Frame(viewer)
-        summary.pack(before=viewer.winfo_children()[1],fill='x',pady=(8,4))
-        self.viewer_metrics=[]
-        for index,title in enumerate(('Recording minimum','Recording maximum','Duration')):
-            summary.columnconfigure(index,weight=1,uniform='summary')
-            card=tk.Frame(summary,bg=SURFACE,highlightthickness=1,highlightbackground=BORDER)
-            card.grid(row=0,column=index,sticky='nsew',padx=(0,8) if index<2 else (0,0))
-            tk.Label(card,text=title,anchor='w',bg=SURFACE,fg=NAVY,
-                     font=(UI_FONT,11,'bold')).pack(fill='x',padx=12,pady=(8,2))
-            label=tk.Label(card,text='—',bg=SURFACE,fg=INK,
-                           font=(UI_FONT,19,'bold'),anchor='w')
-            label.pack(fill='x',padx=12,pady=(2,12))
-            self.viewer_metrics.append(label)
-        bar=ttk.Frame(self.vcanvas.get_tk_widget().master);bar.pack(before=self.vcanvas.get_tk_widget(),fill='x')
-        self.history_window=tk.StringVar(value='Buffer data')
-        ttk.Label(bar,text='Time window').pack(side='left')
-        box=ttk.Combobox(bar,textvariable=self.history_window,values=['1 min','5 min','10 min','15 min','30 min','1 hour','Buffer data'],state='readonly',width=12)
-        box.pack(side='left');box.bind('<<ComboboxSelected>>',lambda e:self.slide_history(0))
-        ttk.Button(bar,text='Auto scale',command=self.auto_history_scale).pack(side='left',padx=4)
-        for key,title in [('ymin','Min'),('ymax','Max')]:
-            ttk.Label(bar,text=title).pack(side='left')
-            ttk.Entry(bar,textvariable=self.view_vars[key],width=6).pack(side='left')
-        ttk.Button(bar,text='Apply',command=self.apply_view).pack(side='left')
-        self.history_labels=tk.BooleanVar(value=True)
-        ttk.Checkbutton(bar,text='Show event labels',variable=self.history_labels,command=self.paint_viewer).pack(side='left')
-        self.history_slider=TimeScrollbar(self.vcanvas.get_tk_widget().master,self.slide_history)
-        self.history_slider.pack(after=self.vcanvas.get_tk_widget(),fill='x')
-        self.events_tree.bind('<<TreeviewSelect>>',self.select_history_event)
         self.lcanvas.mpl_connect('motion_notify_event',lambda e:self.hover(e,False))
         self.vcanvas.mpl_connect('motion_notify_event',lambda e:self.hover(e,True))
         self.ltip=None;self.vtip=None;self.hover_artists={}
-        for canvas in (self.lcanvas,self.vcanvas):
+        for canvas in (self.lcanvas,):
             widget=canvas.get_tk_widget()
             widget.pack_forget()
             # Bottom controls and navigator claim their space before the flexible plot.
-            siblings = [self.live_events,self.live_event_toggle,self.live_slider] if canvas==self.lcanvas else [self.events_tree,self.history_slider]
+            siblings = [self.live_events,self.live_event_toggle,self.live_slider] if canvas==self.lcanvas else [self.history_slider]
             for item in siblings:
                 item.pack_forget()
                 item.pack(side='bottom',fill='x')
@@ -685,8 +758,8 @@ class App(tk.Tk):
         self.find_ports()
 
     def scroll_page(self,event):
-        if getattr(self,'page',None) not in ('Settings','Viewer'):return
-        canvas=self.settings_canvas if self.page=='Settings' else self.viewer_sidebar_canvas
+        if getattr(self,'page',None)!='Settings':return
+        canvas=self.settings_canvas
         target=self.winfo_containing(event.x_root,event.y_root)
         current=target
         while current is not None and current!=canvas:
@@ -849,12 +922,8 @@ class App(tk.Tk):
             for label,value in zip(self.metric,(lo,hi)):
                 label.config(text='—' if value is None else f'{value:,.2f} {self.store.get(self.last_recording)["unit"]}')
             self.paint_live_events()
-        if self.viewer_sid:
-            lo,hi=self.recording_extrema(self.viewer_sid)
-            seconds=int(max(0,(self.vsession['ended'] or time.time())-self.vsession['started']))
-            for widget,value in zip(self.viewer_metrics[:2],(lo,hi)):
-                widget.config(text='—' if value is None else f'{value:,.2f} {self.vsession["unit"]}')
-            self.viewer_metrics[2].config(text=f'{seconds//60} min {seconds%60:02} sec')
+        if self.viewer_sid and self.page=='Viewer':
+            self.update_viewer_summary()
 
     def paint_live_events(self):
         for artist in self.live_artists:
