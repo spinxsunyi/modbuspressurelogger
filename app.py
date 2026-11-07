@@ -300,8 +300,14 @@ class App(tk.Tk):
     def save_details(self):
         self.save_job=None
         if self.detail_sid:
-            try: self.store.update(self.detail_sid,'details',{k:v.get() for k,v in self.detail_vars.items()}); self.saved.config(text='Saved')
-            except Exception as e: self.saved.config(text='SAVE FAILED'); messagebox.showerror('Save failed',str(e))
+            try:
+                self.store.update(self.detail_sid,'details',{k:v.get() for k,v in self.detail_vars.items()})
+                self.saved.config(text='Saved')
+            except Exception as e:
+                self.saved.config(text='SAVE FAILED')
+                messagebox.showerror('Save failed',str(e))
+                return False
+        return True
     def load_details(self,sid):
         if self.save_job:self.after_cancel(self.save_job); self.save_details()
         self.detail_sid=sid; s=self.store.get(sid); d=json.loads(s['details']); self.edit_loading=True
@@ -956,7 +962,7 @@ class App(tk.Tk):
             if self.save_job:
                 self.after_cancel(self.save_job)
                 self.save_job=None
-                self.save_details()
+                if self.save_details() is False:return
         except Exception as exc:
             messagebox.showerror('Cannot close safely',
                 'Recording details could not be saved. Please retry.\n'+str(exc),parent=self)
@@ -966,8 +972,8 @@ class App(tk.Tk):
         self.shutdown_warning_shown=False
         self.footer.config(text='Saving and closing...')
         self.engine.send('quit')
-        # Keep the event loop alive while the worker commits its final recording.
-        self.after(0,self.tick)
+        # The existing periodic tick checks worker completion; do not start
+        # a second parallel tick loop while shutting down.
 
     def enhance(self):
         self.last_recording=None; self.enhanced_last=0; self.live_artists=[]
