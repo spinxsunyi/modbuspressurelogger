@@ -10,7 +10,7 @@ from core import DEFAULTS,FIELDS,Store,Engine
 from units import from_psi,to_psi
 from instance import InstanceLock
 from exports import export,stamp
-from report_page import report_figure,graph_figure
+from report_page import report_figure,graph_figure,report_name
 from app_icon import set_window_icon
 
 UI_FONT='Segoe UI' if os.name=='nt' else 'Helvetica'
@@ -1262,7 +1262,7 @@ class App(tk.Tk):
             messagebox.showinfo('Export','Wait for the current export to finish.',parent=self);return
         suffix='jpg' if fmt=='jpg' else fmt
         path=filedialog.asksaveasfilename(parent=self,defaultextension='.'+suffix,
-            initialfile=session['name']+('_graph' if fmt=='jpg' else '_report' if fmt=='pdf' else '_data')+'.'+suffix,
+            initialfile=report_name(session)+'.'+suffix,
             filetypes=[('PDF report','*.pdf')] if fmt=='pdf' else [('JPEG image','*.jpg')] if fmt=='jpg' else [('Excel workbook','*.xlsx')] if fmt=='xlsx' else [('CSV data','*.csv')])
         if not path:return
         self.exporting=True
