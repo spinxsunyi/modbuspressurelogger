@@ -7,6 +7,8 @@ from matplotlib.figure import Figure
 from matplotlib.ticker import MaxNLocator, FuncFormatter
 from exports import stamp
 from units import from_psi
+from app_icon import gauge_image
+import numpy as np
 
 def report_name(session):
     """Readable, Windows-safe basename shared by PDF, JPEG and detailed exports."""
@@ -51,8 +53,13 @@ def report_figure(store, sid, unit='psi', time_range=None, time_axis='Elapsed Ti
         fig.text(x,y,str(s),fontsize=size,color=color,fontweight='bold' if bold else 'normal',va='top',**kw)
     def rule(y):
         fig.add_artist(__import__('matplotlib').lines.Line2D([.055,.945],[y,y],transform=fig.transFigure,color='#c9d3dc',lw=.8))
-    txt(.06,.966,'Digital Pressure Recorder',18,True)
-    txt(.06,.937,'PRESSURE RECORDING REPORT',9,True,color=teal)
+    # Use the same gauge artwork as the application icon, rendered at 512px
+    # for a crisp print-quality mark rather than enlarging the 16/32px icon.
+    logo_ax=fig.add_axes([.06,.929,.060,.043])
+    logo_ax.imshow(np.asarray(gauge_image(512)),interpolation='lanczos')
+    logo_ax.set_axis_off()
+    txt(.132,.966,'Digital Pressure Recorder',18,True)
+    txt(.132,.937,'PRESSURE RECORDING REPORT',9,True,color=teal)
     txt(.94,.963,'Version 1.0',8,color=gray,ha='right')
     rule(.914)
     txt(.06,.898,'RECORDING METADATA',10,True)
