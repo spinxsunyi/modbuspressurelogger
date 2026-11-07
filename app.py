@@ -619,10 +619,10 @@ class App(tk.Tk):
                    style='Accent.TButton',command=lambda:self.show_report_step(2))
         self.report_continue_record.pack(side='right')
         selection=ttk.Frame(choose);selection.pack(fill='x')
-        ttk.Label(selection,textvariable=self.reporting_record,font=(UI_FONT,12,'bold')).pack(side='left',padx=(0,18))
-        self.report_history_button=ttk.Button(selection,text='Select from History  ▾',
+        ttk.Label(selection,textvariable=self.reporting_record,font=(UI_FONT,12,'bold')).pack(anchor='w')
+        self.report_history_button=ttk.Button(selection,text='Select a Recording  ▾',
                    style='CompactAction.TButton',command=self.toggle_report_history)
-        self.report_history_button.pack(side='left')
+        self.report_history_button.pack(anchor='w',pady=(9,0))
         self.report_history_panel=ttk.Frame(choose)
         searchbar=ttk.Frame(self.report_history_panel);searchbar.pack(fill='x',pady=(10,7))
         ttk.Label(searchbar,text='Find recording').pack(side='left',padx=(0,8))
@@ -898,14 +898,26 @@ class App(tk.Tk):
         dialog.grab_set()
         dialog.focus_set()
 
+    def update_report_history_button(self):
+        """Reflect selection and expanded/collapsed state independently."""
+        if self.report_history_panel.winfo_manager():
+            label='Hide Recordings  ▴'
+            style='Compact.TButton'
+        elif getattr(self,'reporting_sid',None) and self.store.get(self.reporting_sid):
+            label='Change Recording  ▾'
+            style='Compact.TButton'
+        else:
+            label='Select a Recording  ▾'
+            style='CompactAction.TButton'
+        self.report_history_button.configure(text=label,style=style)
+
     def toggle_report_history(self):
         if self.report_history_panel.winfo_manager():
             self.report_history_panel.pack_forget()
-            self.report_history_button.configure(text='Select from History  ▾',style='CompactAction.TButton')
         else:
             self.refresh_report_history()
             self.report_history_panel.pack(fill='both',expand=True,pady=(6,0))
-            self.report_history_button.configure(text='Hide Recordings  ▴',style='Compact.TButton')
+        self.update_report_history_button()
 
     def refresh_report_history(self):
         tree=self.report_history_tree
@@ -1006,10 +1018,12 @@ class App(tk.Tk):
             self.reporting_sid=None
             self.reporting_record.set('No recording selected')
             self.report_record_status.set('No recording chosen yet.')
+            self.update_report_history_button()
             return
         details=json.loads(session['details'])
         self.reporting_record.set((details.get('well') or session['name'])+'  |  '+(details.get('job') or 'Recording'))
         self.report_record_status.set('Source: '+session['mode']+'   •   Started: '+stamp(session['started'],json.loads(session['settings']).get('utc_offset',8)).replace('T',' ')[:19])
+        self.update_report_history_button()
         if self.report_range_sid!=sid:self.reset_report_range()
         try:time_range=self.get_report_range()
         except ValueError as exc:
