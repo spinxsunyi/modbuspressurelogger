@@ -229,7 +229,8 @@ class App(tk.Tk):
     def notes_changed(self,event):
         if self.notes.edit_modified():
             self.notes.edit_modified(False)
-            self.detail_vars['notes'].set(self.notes.get('1.0','end-1c'))
+            if not self.edit_loading:
+                self.detail_vars['notes'].set(self.notes.get('1.0','end-1c'))
 
     def pick_date(self):
         if not self.detail_sid: return
@@ -270,9 +271,11 @@ class App(tk.Tk):
         if self.save_job:self.after_cancel(self.save_job); self.save_details()
         self.detail_sid=sid; s=self.store.get(sid); d=json.loads(s['details']); self.edit_loading=True
         for k,v in self.detail_vars.items():v.set(d.get(k,''))
-        self.edit_loading=False
         for en in self.detail_entries:en.config(state='normal')
-        self.notes.delete('1.0','end');self.notes.insert('1.0',d.get('notes',''));self.notes.edit_modified(False)
+        self.notes.delete('1.0','end')
+        self.notes.insert('1.0',d.get('notes',''))
+        self.notes.edit_modified(False)
+        self.edit_loading=False
         self.session_name.config(text=s['name']); self.saved.config(text='Saved')
     def connect(self):
         self.drop.set(False); self.engine.send('connect',dict(self.settings))
