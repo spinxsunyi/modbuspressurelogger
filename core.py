@@ -81,7 +81,7 @@ class Store:
         details={k:'' for k in FIELDS}; details['job_date']=datetime.now().strftime('%Y-%m-%d')
         with self.connect() as c:
             c.execute('INSERT INTO sessions(id,name,started,state,mode,unit,settings,details) VALUES(?,?,?,?,?,?,?,?)',
-                (sid,name,ts,'Recording',settings['mode'],settings['unit'],json.dumps(settings),json.dumps(details)))
+                (sid,name,ts,'Recording',settings['mode'],'psi',json.dumps(settings),json.dumps(details)))
         return sid
     def finish(self,sid,state='Completed'):
         with self.connect() as c: c.execute('UPDATE sessions SET ended=?,state=? WHERE id=?',(time.time(),state,sid))
