@@ -112,6 +112,13 @@ try:
     a.load_viewer(sid);pump(.4)
     # Full-width Viewer: summary, read-only metadata and annotations below the chart.
     assert a.viewer_summary_vars['duration'].get().endswith('s')
+    assert a.viewer_summary_vars['first_pressure'].get().endswith('psi')
+    assert a.viewer_summary_vars['last_pressure'].get().endswith('psi')
+    with a.store.connect() as conn:
+        first=conn.execute("SELECT value FROM samples WHERE session=? AND quality='OK' AND value IS NOT NULL ORDER BY ts,id LIMIT 1",(sid,)).fetchone()
+        last=conn.execute("SELECT value FROM samples WHERE session=? AND quality='OK' AND value IS NOT NULL ORDER BY ts DESC,id DESC LIMIT 1",(sid,)).fetchone()
+    assert float(a.viewer_summary_vars['first_pressure'].get().split()[0].replace(',',''))==round(first['value'],2)
+    assert float(a.viewer_summary_vars['last_pressure'].get().split()[0].replace(',',''))==round(last['value'],2)
     assert 'size' not in a.viewer_summary_vars
     panel=a.viewer_bottom_content
     assert panel.winfo_manager()=='pack'
