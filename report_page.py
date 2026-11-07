@@ -253,7 +253,7 @@ def full_size_chart_figure(store, sid, unit='psi', time_range=None,
     chart_to=time_range[1] if time_range is not None else (rows[-1]['ts'] if rows else (session['ended'] or session['started']))
     label(.955,.879,f'From: {stamp(chart_from,offset)}',8,color=gray,ha='right')
     label(.955,.860,f'To: {stamp(chart_to,offset)}',8,color=gray,ha='right')
-    ax=fig.add_axes([.09,.145,.855,.715])
+    ax=fig.add_axes([.09,.145,.855,.690])
     start=session['started']
     ax.plot([(r['ts']-start)/60 for r in rows],
             [from_psi(r['value'],unit) if r['quality']=='OK' and r['value'] is not None
