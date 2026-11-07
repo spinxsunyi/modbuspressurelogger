@@ -120,10 +120,10 @@ class App(tk.Tk):
         style.configure('TLabelframe',background=BG,relief='solid',borderwidth=1)
         style.configure('TLabelframe.Label',font=(UI_FONT,11,'bold'),foreground=NAVY,background=BG)
         nav=tk.Frame(self,bg='#17334c'); nav.pack(fill='x')
-        self.brand=tk.Label(nav,text='Digital Pressure Recorder',font=(UI_FONT,20,'bold'),bg=NAVY,fg='white',padx=18,pady=10); self.brand.pack(side='left')
+        self.brand=tk.Label(nav,text='Digital Pressure Recorder',font=(UI_FONT,17,'bold'),bg=NAVY,fg='white',padx=14,pady=7); self.brand.pack(side='left')
         self.nav_buttons={}
         for page in ['Live Monitor','History','Reporting','Settings','About']:
-            button=tk.Button(nav,text=page,command=lambda p=page:self.show(p),bg=NAVY,fg='white',activebackground=TEAL_DARK,activeforeground='white',relief='flat',bd=0,padx=15,pady=12,font=(UI_FONT,10))
+            button=tk.Button(nav,text=page,command=lambda p=page:self.show(p),bg=NAVY,fg='white',activebackground=TEAL_DARK,activeforeground='white',relief='flat',bd=0,padx=12,pady=7,font=(UI_FONT,10))
             button.pack(side='left'); self.nav_buttons[page]=button
         self.global_status=tk.Label(nav,text='SIMULATION',bg='#17334c',fg='#ffcb72',padx=15); self.global_status.pack(side='right')
         self.credit=tk.Label(self,text='Created by Eka Yudhi Pratama  •  November 2026',bg='#17334c',fg='white')
@@ -228,11 +228,13 @@ class App(tk.Tk):
             self.paint_viewer()
 
     def make_live(self):
-        p=self.pages['Live Monitor']; top=ttk.Frame(p); top.pack(fill='x')
+        p=self.pages['Live Monitor']; top=ttk.Frame(p); top.pack(fill='x',pady=(0,1))
         self.connection=ttk.Label(top,text='Waiting for device'); self.connection.pack(side='left')
-        self.connect_btn=ttk.Button(top,text='Connect',style='Compact.TButton',command=self.toggle_connect); self.connect_btn.pack(side='left',padx=12)
+        self.connect_btn=ttk.Button(top,text='Connect',style='Compact.TButton',command=self.toggle_connect); self.connect_btn.pack(side='left',padx=(10,8))
+        self.reading_status=tk.Label(top,text='Waiting for first reading',bg=BG,fg=INK,font=(UI_FONT,9),anchor='w')
+        self.reading_status.pack(side='left',padx=(0,8))
         self.drop=tk.BooleanVar(); ttk.Checkbutton(top,text='Simulate disconnect',variable=self.drop,command=lambda:self.engine.send('drop',self.drop.get())).pack(side='right')
-        body=ttk.Panedwindow(p,orient='horizontal'); body.pack(fill='both',expand=True,pady=(7,4))
+        body=ttk.Panedwindow(p,orient='horizontal'); body.pack(fill='both',expand=True,pady=(2,4))
         main=ttk.Frame(body); self.details_panel=ttk.LabelFrame(body,text='Recording details  |  autosaved',padding=10); body.add(main,weight=5); body.add(self.details_panel,weight=1); self.live_pane=body
         readings=ttk.Frame(main);readings.pack(fill='x',pady=(0,4))
         for col in range(3):readings.columnconfigure(col,weight=1,uniform='metric')
@@ -247,10 +249,7 @@ class App(tk.Tk):
         live_card,live_bg=metric_card(0,'Live pressure',True)
         self.value=tk.Label(live_card,text='—',font=(UI_FONT,25,'bold'),bg=live_bg,
                             fg=TEAL_DARK,anchor='w')
-        self.value.pack(fill='x',padx=12)
-        self.reading_status=tk.Label(live_card,text='Waiting for first reading',
-                                     bg=live_bg,fg=INK,font=(UI_FONT,9),anchor='w')
-        self.reading_status.pack(fill='x',padx=12,pady=(0,3))
+        self.value.pack(fill='x',padx=12,pady=(0,2))
         self.metric=[]
         for col,title in [(1,'Recording minimum'),(2,'Recording maximum')]:
             panel,panel_bg=metric_card(col,title)
@@ -983,7 +982,7 @@ class App(tk.Tk):
                 if kind=='sample':
                     s=d['sample'];self.latest=s;self.buffer.append(s)
                     if s['quality']=='OK':self.value.config(text=f"{from_psi(s['value'],self.settings['unit']):,.2f} {self.settings['unit']}")
-                    self.reading_status.config(text=f"{self.settings['mode'].upper()}  |  {s['quality']}  |  {stamp(s['ts'],self.settings['utc_offset'])[11:23]}",foreground='#008b92' if s['quality']=='OK' else '#b45309')
+                    self.reading_status.config(text=f"{self.settings['mode'].upper()}  |  {s['quality']}  |  {stamp(s['ts'],self.settings['utc_offset'])[11:23]}",fg='#008b92' if s['quality']=='OK' else '#b45309')
                     if d['sid']:self.rec_count+=1;self.rec_errors+=s['quality']!='OK'
                 elif kind=='connected':self.connected=True;self.connection.config(text=d['settings']['mode']+'  |  '+(d['settings']['port'] or 'virtual sensor'));self.connect_btn.config(text='Disconnect')
                 elif kind=='disconnected':self.connected=False;self.connection.config(text='Disconnected');self.connect_btn.config(text='Connect');self.reading_status.config(text='STALE  |  disconnected');self.latest=None
