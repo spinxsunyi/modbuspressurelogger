@@ -7,6 +7,7 @@ from tkinter import ttk, messagebox, filedialog, simpledialog
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from core import DEFAULTS,FIELDS,Store,Engine
+from units import from_psi,to_psi
 from instance import InstanceLock
 from exports import export,stamp
 from app_icon import set_window_icon
@@ -568,7 +569,7 @@ class App(tk.Tk):
         ttk.Button(grid,text='Refresh ports',command=self.find_ports).grid(row=1,column=2,padx=10)
         self.port_count=ttk.Label(grid);self.port_count.grid(row=2,column=2)
         self.auto=tk.BooleanVar(value=self.settings['auto_connect']); ttk.Checkbutton(p,text='Auto-connect last configuration at startup',variable=self.auto).pack(anchor='w',pady=8)
-        ttk.Label(p,text='Hardware profile: PMS-970  |  FC03  |  address 0x0001  |  readout + status\nUnit labels must match the meter; this version does not convert pressure units.\nDevice communication confirmed by user at 9600 baud, November 2026.\n\nData: '+str(DATA),wraplength=900).pack(anchor='w',pady=12)
+        ttk.Label(p,text='Hardware profile: PMS-970  |  FC03  |  address 0x0001  |  readout + status\nSensor/storage unit: PSI. Display units are converted for viewing; stored samples remain PSI.\nDevice communication confirmed by user at 9600 baud, November 2026.\n\nData: '+str(DATA),wraplength=900).pack(anchor='w',pady=12)
         ttk.Button(p,text='Save and reconnect',command=self.apply_settings,style='Accent.TButton').pack(anchor='w')
     def find_ports(self):
         from serial.tools.list_ports import comports
@@ -736,8 +737,9 @@ class App(tk.Tk):
             return stamp(start+x*60,self.settings['utc_offset'])[5:19].replace('T',' ')
         ax.xaxis.set_major_formatter(FuncFormatter(time_label))
         ax.set(xlabel='Elapsed time (mm:ss)' if self.viewer_time_display.get()=='Elapsed time' else 'Date & time',
-               ylabel='Pressure ('+self.vsession['unit']+')',
+               ylabel='Pressure ('+self.settings['unit']+')',
                xlim=(v['xmin'],v['xmax']),ylim=(v['ymin'],v['ymax']))
+        ax.yaxis.set_major_formatter(FuncFormatter(lambda p,pos:f'{from_psi(p,self.settings["unit"]):,.1f}'))
         ax.grid(alpha=.2)
         for i in self.events_tree.get_children():self.events_tree.delete(i)
         for e in self.vevents:
@@ -758,8 +760,8 @@ class App(tk.Tk):
         begin=session['started']
         stop=session['ended'] or self.store.stats(self.viewer_sid)['last']
         elapsed=max(0,int((stop or begin)-begin))
-        values={'min':'—' if lo is None else f'{lo:,.2f} {session["unit"]}',
-                'max':'—' if hi is None else f'{hi:,.2f} {session["unit"]}',
+        values={'min':'—' if lo is None else f'{from_psi(lo,self.settings["unit"]):,.2f} {self.settings["unit"]}',
+                'max':'—' if hi is None else f'{from_psi(hi,self.settings["unit"]):,.2f} {self.settings["unit"]}',
                 'start':stamp(begin,self.settings['utc_offset'])[11:19],
                 'stop':stamp(stop,self.settings['utc_offset'])[11:19] if stop else '—',
                 'duration':f'{elapsed//60}m {elapsed%60:02}s'}
@@ -914,7 +916,7 @@ class App(tk.Tk):
                 kind,d=self.engine.messages.get_nowait()
                 if kind=='sample':
                     s=d['sample'];self.latest=s;self.buffer.append(s)
-                    if s['quality']=='OK':self.value.config(text=f"{s['value']:,.2f} {self.settings['unit']}")
+                    if s['quality']=='OK':self.value.config(text=f"{from_psi(s['value'],self.settings['unit']):,.2f} {self.settings['unit']}")
                     self.reading_status.config(text=f"{self.settings['mode'].upper()}  |  {s['quality']}  |  {stamp(s['ts'],self.settings['utc_offset'])[11:23]}",foreground='#008b92' if s['quality']=='OK' else '#b45309')
                     if d['sid']:self.rec_count+=1;self.rec_errors+=s['quality']!='OK'
                 elif kind=='connected':self.connected=True;self.connection.config(text=d['settings']['mode']+'  |  '+(d['settings']['port'] or 'virtual sensor'));self.connect_btn.config(text='Disconnect')
@@ -937,7 +939,7 @@ class App(tk.Tk):
             self.last_plot=time.monotonic(); rows=list(self.buffer); end=rows[-1]['ts']; seconds={'1 min':60,'5 min':300,'10 min':600,'15 min':900,'30 min':1800,'1 hour':3600,'Buffer data':1e20}[self.window.get()]
             rows=[r for r in rows if r['ts']>=end-seconds] if self.follow.get() else rows
             from matplotlib.ticker import FuncFormatter
-            self.line.set_data([r['ts'] for r in rows],[r['value'] if r['quality']=='OK' else math.nan for r in rows]);self.lax.set_ylabel('Pressure ('+self.settings['unit']+')')
+            self.line.set_data([r['ts'] for r in rows],[r['value'] if r['quality']=='OK' else math.nan for r in rows]);self.lax.set_ylabel('Pressure ('+self.settings['unit']+')');self.lax.yaxis.set_major_formatter(FuncFormatter(lambda p,pos:f'{from_psi(p,self.settings["unit"]):,.1f}'))
             self.lax.xaxis.set_major_formatter(FuncFormatter(lambda x,pos:stamp(x,self.settings['utc_offset'])[11:19]))
             if self.follow.get():
                 self.lax.set_autoscaley_on(self.live_auto.get());self.lax.relim();self.lax.autoscale_view(scaley=self.live_auto.get());self.lax.set_xlim(max(rows[0]['ts'],end-seconds),max(end,rows[0]['ts']+1))
@@ -1102,7 +1104,7 @@ class App(tk.Tk):
         self.live_options=win
         body=ttk.Frame(win,padding=14);body.pack(fill='both',expand=True)
         for row,(label,var) in enumerate((('Pressure min',self.live_min),('Pressure max',self.live_max))):
-            ttk.Label(body,text=label).grid(row=row,column=0,sticky='w',padx=(0,10),pady=5)
+            ttk.Label(body,text=label+' ('+self.settings['unit']+')').grid(row=row,column=0,sticky='w',padx=(0,10),pady=5)
             ttk.Entry(body,textvariable=var,width=14).grid(row=row,column=1,sticky='ew',pady=5)
         ttk.Checkbutton(body,text='Show event labels',variable=self.live_labels,
                         command=self.paint_live_events).grid(row=2,column=0,columnspan=2,sticky='w',pady=(10,6))
@@ -1122,14 +1124,14 @@ class App(tk.Tk):
             self.lax.autoscale_view(scaley=True)
         else:
             try:
-                lo,hi=float(self.live_min.get()),float(self.live_max.get())
+                lo,hi=to_psi(float(self.live_min.get()),self.settings['unit']),to_psi(float(self.live_max.get()),self.settings['unit'])
                 if math.isfinite(lo) and math.isfinite(hi) and lo<hi:self.lax.set_ylim(lo,hi)
             except ValueError:pass
         self.lcanvas.draw_idle()
 
     def apply_live_scale(self):
         try:
-            lo,hi=float(self.live_min.get()),float(self.live_max.get())
+            lo,hi=to_psi(float(self.live_min.get()),self.settings['unit']),to_psi(float(self.live_max.get()),self.settings['unit'])
             if not math.isfinite(lo) or not math.isfinite(hi) or lo>=hi:
                 raise ValueError('Minimum must be less than maximum; use finite numbers.')
             self.live_auto.set(False)
@@ -1184,8 +1186,8 @@ class App(tk.Tk):
             if not rows:canvas.draw_idle();return
             row=min(rows,key=lambda r:abs(r['ts']-target));x=xpos(row['ts']);y=row['value']
             if row['quality']!='OK' or y is None:canvas.draw_idle();return
-            unit=self.vsession['unit'] if history else self.settings['unit']
-            text=f"Time: {stamp(row['ts'],self.settings['utc_offset'])[11:23]}\nPressure: {y:,.2f} {unit}"
+            unit=self.settings['unit']
+            text=f"Time: {stamp(row['ts'],self.settings['utc_offset'])[11:23]}\nPressure: {from_psi(y,unit):,.2f} {unit}"
         if not near:
             marker,=ax.plot([x],[y],'o',color='#008b86',ms=5)
             guide=ax.axvline(x,color='#66798a',ls='--',lw=.7)
