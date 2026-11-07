@@ -90,7 +90,7 @@ class App(tk.Tk):
         except (OSError,ValueError): pass
         self.store=Store(DATA/'recordings.sqlite'); self.store.recover(); self.engine=Engine(self.store); self.engine.start()
         self.sid=None; self.detail_sid=None; self.connected=False; self.latest=None; self.buffer=deque(maxlen=7200); self.viewer_sid=None
-        self.save_job=None; self.edit_loading=False; self.closing=False; self.last_plot=0; self.rec_count=0; self.rec_errors=0; self.pending=False; self.details_user_visible=True
+        self.save_job=None; self.edit_loading=False; self.closing=False; self.shutdown_warning_shown=False; self.last_plot=0; self.rec_count=0; self.rec_errors=0; self.pending=False; self.details_user_visible=True
         self.configure(bg=BG); style=ttk.Style(self); style.theme_use('clam')
         style.configure('.',font=(UI_FONT,10),background=BG,foreground=INK)
         style.configure('TFrame',background=BG)
@@ -895,6 +895,20 @@ class App(tk.Tk):
             except Exception as e:self.engine.emit('export_error',text='Export failed: '+str(e))
         threading.Thread(target=work,daemon=True).start()
     def tick(self):
+        # Give shutdown priority over drawing charts or processing queued samples.
+        # Otherwise the UI can look frozen even after the window's X is clicked.
+        if self.closing:
+            if not self.engine.is_alive():
+                self.instance_lock.close()
+                self.destroy()
+                return
+            if time.monotonic()-self.close_started>10 and not self.shutdown_warning_shown:
+                self.shutdown_warning_shown=True
+                messagebox.showwarning('Closing Digital Pressure Recorder',
+                    'The device worker is still stopping. The application will close after it finishes. '
+                    'Please avoid forcing it closed during a recording.',parent=self)
+            self.after(80,self.tick)
+            return
         try:
             while True:
                 kind,d=self.engine.messages.get_nowait()
@@ -929,14 +943,31 @@ class App(tk.Tk):
                 self.lax.set_autoscaley_on(self.live_auto.get());self.lax.relim();self.lax.autoscale_view(scaley=self.live_auto.get());self.lax.set_xlim(max(rows[0]['ts'],end-seconds),max(end,rows[0]['ts']+1))
             self.lcanvas.draw_idle()
         self.update_enhancements()
-        if self.closing:
-            if not self.engine.is_alive():self.instance_lock.close();self.destroy();return
         self.after(80,self.tick)
     def close(self):
-        if self.exporting:messagebox.showinfo('Export running','Please wait for the export to finish before closing.');return
-        if self.sid and not messagebox.askyesno('Stop and exit?','Stop recording, save and exit?'):return
-        if self.save_job:self.after_cancel(self.save_job);self.save_details()
-        self.closing=True;self.engine.send('quit');self.footer.config(text='Saving and closing...')
+        if self.closing:return  # Repeated X clicks must not enqueue duplicate quits.
+        if self.exporting:
+            messagebox.showinfo('Export running','Please wait for the export to finish before closing.',parent=self)
+            return
+        if (self.sid or self.pending) and not messagebox.askyesno(
+                'Stop and exit?','Stop recording, save and exit?',parent=self):
+            return
+        try:
+            if self.save_job:
+                self.after_cancel(self.save_job)
+                self.save_job=None
+                self.save_details()
+        except Exception as exc:
+            messagebox.showerror('Cannot close safely',
+                'Recording details could not be saved. Please retry.\n'+str(exc),parent=self)
+            return
+        self.closing=True
+        self.close_started=time.monotonic()
+        self.shutdown_warning_shown=False
+        self.footer.config(text='Saving and closing...')
+        self.engine.send('quit')
+        # Keep the event loop alive while the worker commits its final recording.
+        self.after(0,self.tick)
 
     def enhance(self):
         self.last_recording=None; self.enhanced_last=0; self.live_artists=[]
