@@ -13,6 +13,8 @@ from instance import InstanceLock
 from exports import export,stamp
 from report_page import report_figure,report_figures,graph_figure,report_name,apply_report_time_scale
 from app_icon import set_window_icon, gauge_image
+from chart_scale import (WINDOWS, apply_window_time_grid, apply_engineering_grid,
+                         apply_pressure_grid, reduce_live_samples)
 from PIL import ImageTk
 
 UI_FONT='Segoe UI' if os.name=='nt' else 'Helvetica'
@@ -82,42 +84,6 @@ class TimeScrollbar(ttk.Scrollbar):
         self.percent=100*min(span,start)/span if span>0 else 100.0
         super().set(start,end)
 
-
-def reduce_live_samples(rows, max_points=4000):
-    """Render bounded min/max envelopes while retaining raw samples in the buffer.
-
-    Every bucket keeps its first/last sample, pressure extrema, and any non-OK
-    quality transition. This preserves short spikes and visible communication
-    gaps much better than taking every Nth reading.
-    """
-    if len(rows) <= max_points:
-        return rows
-    bucket_size=max(1,math.ceil(len(rows)/(max_points//4)))
-    reduced=[]
-    for start in range(0,len(rows),bucket_size):
-        bucket=rows[start:start+bucket_size]
-        picks={0,len(bucket)-1}
-        valid=[(i,r['value']) for i,r in enumerate(bucket) if r['quality']=='OK']
-        if valid:
-            picks.add(min(valid,key=lambda p:p[1])[0])
-            picks.add(max(valid,key=lambda p:p[1])[0])
-        for i,r in enumerate(bucket):
-            if r['quality']!='OK':
-                picks.add(i)
-                if i:picks.add(i-1)
-                if i+1<len(bucket):picks.add(i+1)
-        reduced.extend(bucket[i] for i in sorted(picks))
-    return reduced
-
-
-def apply_engineering_grid(ax, visible=True):
-    """Barton-style major/minor grid, adaptive to the current axis scale."""
-    from matplotlib.ticker import AutoMinorLocator
-    ax.xaxis.set_minor_locator(AutoMinorLocator(5))
-    ax.yaxis.set_minor_locator(AutoMinorLocator(5))
-    ax.grid(visible=visible, which='major', color='#8d98a3', alpha=.30, linewidth=.8)
-    ax.grid(visible=visible, which='minor', color='#aab4bd', alpha=.16, linewidth=.45)
-    ax.set_axisbelow(True)
 
 class App(tk.Tk):
     def __init__(self):
@@ -1843,18 +1809,8 @@ class App(tk.Tk):
     def paint_viewer(self):
         v=self.view_values(); ax=self.vax; ax.clear(); start=self.vsession['started']
         ax.plot([(r['ts']-start)/60 for r in self.vrows],[r['value'] if r['quality']=='OK' and r['value'] is not None else math.nan for r in self.vrows],color='#008b92',lw=1.1)
-        from matplotlib.ticker import FuncFormatter, MaxNLocator, MultipleLocator
-        # History uses the same fixed engineering time divisions as Live Monitor.
-        # The X values are elapsed minutes, so convert configured seconds to minutes.
-        history_grid={'1 min':(10,2),'5 min':(60,12),'10 min':(120,30),
-                      '15 min':(180,30),'30 min':(300,60),'1 hour':(600,120),
-                      '12 hours':(3600,900),'24 hours':(7200,1800)}
-        if self.history_window.get() in history_grid:
-            major,minor=history_grid[self.history_window.get()]
-            ax.xaxis.set_major_locator(MultipleLocator(major/60))
-            ax.xaxis.set_minor_locator(MultipleLocator(minor/60))
-        else:
-            ax.xaxis.set_major_locator(MaxNLocator(nbins=5,min_n_ticks=2))
+        from matplotlib.ticker import FuncFormatter
+        apply_window_time_grid(ax,self.history_window.get(),units='minutes')
         def time_label(x,pos):
             if self.viewer_time_display.get()=='Elapsed time':
                 seconds=int(round(x*60))
@@ -1866,9 +1822,8 @@ class App(tk.Tk):
                ylabel='Pressure ('+self.settings['unit']+')',
                xlim=(v['xmin'],v['xmax']),ylim=(v['ymin'],v['ymax']))
         ax.yaxis.set_major_formatter(FuncFormatter(lambda p,pos:f'{from_psi(p,self.settings["unit"]):,.1f}'))
+        apply_pressure_grid(ax,v['ymin'],v['ymax'])
         apply_engineering_grid(ax)
-        if self.history_window.get() in history_grid:
-            ax.xaxis.set_minor_locator(MultipleLocator(history_grid[self.history_window.get()][1]/60))
         if self.viewer_time_display.get()=='Date & time':
             from datetime import datetime,timezone,timedelta
             date=datetime.fromtimestamp(start+v['xmin']*60,timezone(timedelta(hours=self.settings['utc_offset']))).strftime('%d %b %Y')
@@ -2148,20 +2103,10 @@ class App(tk.Tk):
             self.rec_label.config(text=f'{self.rec_count:,} samples  |  {self.rec_errors} errors')
         if self.latest and time.time()-self.latest['ts']>max(2,3*self.settings['interval']):self.reading_status.config(text='STALE  |  waiting for new reading',fg='#b45309')
         if self.page=='Live Monitor' and self.buffer and time.monotonic()-self.last_plot>.5:
-            self.last_plot=time.monotonic(); rows=list(self.buffer); end=rows[-1]['ts']; seconds={'1 min':60,'5 min':300,'10 min':600,'15 min':900,'30 min':1800,'1 hour':3600,'12 hours':43200,'24 hours':86400,'Buffer data':1e20}[self.window.get()]
+            self.last_plot=time.monotonic(); rows=list(self.buffer); end=rows[-1]['ts']; seconds=WINDOWS[self.window.get()][0] if self.window.get() in WINDOWS else 1e20
             rows=[r for r in rows if r['ts']>=end-seconds] if self.follow.get() else rows
-            from matplotlib.ticker import FuncFormatter, MaxNLocator, MultipleLocator, AutoMinorLocator
-            # Fixed engineering-chart time divisions (seconds), independent of data count.
-            time_grid={'1 min':(10,2),'5 min':(60,12),'10 min':(120,30),
-                       '15 min':(180,30),'30 min':(300,60),'1 hour':(600,120),
-                       '12 hours':(3600,900),'24 hours':(7200,1800)}
-            if self.window.get() in time_grid:
-                major,minor=time_grid[self.window.get()]
-                self.lax.xaxis.set_major_locator(MultipleLocator(major))
-                self.lax.xaxis.set_minor_locator(MultipleLocator(minor))
-            else:
-                self.lax.xaxis.set_major_locator(MaxNLocator(nbins=5,min_n_ticks=2))
-                self.lax.xaxis.set_minor_locator(AutoMinorLocator(5))
+            from matplotlib.ticker import FuncFormatter
+            apply_window_time_grid(self.lax,self.window.get(),units='seconds')
             display_rows=reduce_live_samples(rows)
             self.line.set_data([r['ts'] for r in display_rows],[r['value'] if r['quality']=='OK' else math.nan for r in display_rows]);self.lax.set_ylabel('Pressure ('+self.settings['unit']+')');self.lax.yaxis.set_major_formatter(FuncFormatter(lambda p,pos:f'{from_psi(p,self.settings["unit"]):,.1f}'))
             self.lax.xaxis.set_major_formatter(FuncFormatter(lambda x,pos:stamp(x,self.settings['utc_offset'])[11:19]))
@@ -2422,7 +2367,7 @@ class App(tk.Tk):
             messagebox.showerror('Pressure scale',str(exc))
 
     def window_seconds(self,name):
-        return {'1 min':60,'5 min':300,'10 min':600,'15 min':900,'30 min':1800,'1 hour':3600,'12 hours':43200,'24 hours':86400,'Buffer data':float('inf'),'All data':float('inf')}[name]
+        return WINDOWS[name][0] if name in WINDOWS else float('inf')
 
     def slide_live(self,value):
         if not self.buffer:return
