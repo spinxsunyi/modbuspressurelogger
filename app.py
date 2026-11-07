@@ -761,7 +761,7 @@ class App(tk.Tk):
         self.report_resolution_picker=ttk.Combobox(resolution_row,textvariable=self.report_resolution,
             values=['all','0.5 s','1 s','1 min'],state='readonly',width=12)
         self.report_resolution_picker.pack(side='left')
-        ttk.Label(resolution_row,text='Summaries include average, minimum, maximum and sample count.',
+        ttk.Label(resolution_row,text='Downsampling retains original readings; no averaging or interpolation.',
                   foreground='#576677').pack(side='left',padx=(12,0))
         self.report_resolution_row=resolution_row
         ttk.Button(actions,text='Export Selected',style='Accent.TButton',
@@ -769,7 +769,8 @@ class App(tk.Tk):
         ttk.Button(actions,text='Edit Metadata & Notes',style='Compact.TButton',
                    command=self.edit_report_metadata).pack(side='right',padx=(0,12))
         self.report_preview_info=tk.StringVar(value='')
-        ttk.Label(three,textvariable=self.report_preview_info,foreground='#576677').pack(anchor='w',pady=(0,6))
+        self.report_preview_info_label=ttk.Label(three,textvariable=self.report_preview_info,foreground='#576677')
+        self.report_preview_info_label.pack(anchor='w',pady=(0,6))
         area=ttk.LabelFrame(three,text='Preview',padding=8);area.pack(fill='both',expand=True)
         self.reporting_canvas=tk.Canvas(area,bg='#e2e8ed',highlightthickness=0)
         scroll=ttk.Scrollbar(area,orient='vertical',command=self.reporting_canvas.yview)
@@ -947,7 +948,7 @@ class App(tk.Tk):
     def refresh_reporting(self):
         if hasattr(self,'report_resolution_row'):
             if self.report_format.get() in ('xlsx','csv'):
-                self.report_resolution_row.pack(fill='x',pady=(0,8),before=self.reporting_canvas.master)
+                self.report_resolution_row.pack(fill='x',pady=(0,8),before=self.report_preview_info_label)
             else:
                 self.report_resolution_row.pack_forget()
         sid=getattr(self,'reporting_sid',None)
