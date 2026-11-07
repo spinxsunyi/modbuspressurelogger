@@ -1023,7 +1023,16 @@ class App(tk.Tk):
                     self.footer.config(text='Modbus communication error: '+d['text'][:160])
                 elif kind=='exported':self.exporting=False;self.footer.config(text='Export saved: '+d['path'])
                 elif kind=='export_error':self.exporting=False;messagebox.showerror('Export failed',d['text'])
-                elif kind=='error':self.pending=False;self.record_btn.config(state='normal');messagebox.showerror('PMS Logger',d['text'])
+                elif kind=='error':
+                    self.pending=False;self.record_btn.config(state='normal')
+                    if self.connection_pending:
+                        self.connection_pending=False;self.connected=False
+                        self.connect_btn.config(text='Connect',state='normal')
+                        self.connection.config(text='Connection failed')
+                        self.reading_status.config(text='CONNECTION ERROR',fg='#b45309')
+                        self.footer.config(text='Connection error: '+d['text'][:160])
+                    else:
+                        messagebox.showerror('PMS Logger',d['text'])
         except queue.Empty:pass
         if self.sid:
             self.rec_label.config(text=f'{self.rec_count:,} samples  |  {self.rec_errors} errors')
