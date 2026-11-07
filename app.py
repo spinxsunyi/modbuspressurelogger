@@ -617,6 +617,10 @@ class App(tk.Tk):
         two=self.report_steps[1]
         section=ttk.LabelFrame(two,text='Step 2 — Select Interval & Graph Options',padding=14)
         section.pack(fill='both',expand=True,pady=(0,8))
+        step2_header=ttk.Frame(section)
+        step2_header.pack(fill='x',pady=(0,10))
+        ttk.Button(step2_header,text='Continue to Preview & Export  >',style='Accent.TButton',
+                   command=lambda:self.show_report_step(3)).pack(side='right')
         self.report_start=tk.StringVar(value='0')
         self.report_end=tk.StringVar(value='0')
         self.report_range_mode=tk.StringVar(value='full')
@@ -744,8 +748,6 @@ class App(tk.Tk):
         navigation2=ttk.Frame(two);navigation2.pack(fill='x')
         ttk.Button(navigation2,text='<  Select Record',style='Compact.TButton',
                    command=lambda:self.show_report_step(1)).pack(side='left')
-        ttk.Button(navigation2,text='Continue to Preview & Export  >',style='Accent.TButton',
-                   command=lambda:self.show_report_step(3)).pack(side='right')
 
         three=self.report_steps[2]
         ttk.Label(three,text='Step 3 — Preview & Export',font=(UI_FONT,12,'bold')).pack(anchor='w',pady=(0,7))
