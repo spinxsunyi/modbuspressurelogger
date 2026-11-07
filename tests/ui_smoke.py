@@ -155,7 +155,14 @@ try:
         assert (out/(name+'.png')).stat().st_size>1000
         print(name,len(b.getvalue()),flush=True)
     assert not errors,errors
-    a.close();pump(.3)
+    a.close()
+    a.close()  # Repeated X clicks must not queue multiple quit commands.
+    deadline=time.monotonic()+5
+    while a.winfo_exists() and time.monotonic()<deadline:
+        a.update()
+        time.sleep(.02)
+    assert not a.winfo_exists(), 'Window did not close after the worker stopped'
+    assert not a.engine.is_alive(), 'Acquisition worker remained active after shutdown'
     print('UI SMOKE PASS: launch, connect, record, autosave, event, disconnect/recover, navigation, stop, viewer, close')
 finally:
     if a.engine.is_alive():a.engine.send('quit');a.engine.join(3)
