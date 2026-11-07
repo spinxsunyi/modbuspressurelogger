@@ -548,9 +548,24 @@ class App(tk.Tk):
         for label,fmt in [('PDF Report','pdf'),('JPEG Graph','jpg'),('Excel — Detailed Data','xlsx'),('CSV — Detailed Data','csv')]:
             ttk.Button(actions,text=label,style='Compact.TButton',
                        command=lambda f=fmt:self.export_reporting(f)).pack(side='left',padx=(0,8))
+        options=ttk.Frame(p);options.pack(fill='x',pady=(0,8))
+        ttk.Label(options,text='Time range (elapsed minutes):').pack(side='left',padx=(0,8))
+        self.report_start=tk.StringVar(value='0')
+        self.report_end=tk.StringVar(value='0')
+        ttk.Label(options,text='From').pack(side='left')
+        ttk.Entry(options,textvariable=self.report_start,width=9).pack(side='left',padx=(4,9))
+        ttk.Label(options,text='To').pack(side='left')
+        ttk.Entry(options,textvariable=self.report_end,width=9).pack(side='left',padx=(4,9))
+        ttk.Button(options,text='Full recording',style='Compact.TButton',command=self.reset_report_range).pack(side='left',padx=(0,16))
+        ttk.Label(options,text='Graph X-axis:').pack(side='left')
+        self.report_axis=tk.StringVar(value='Elapsed Time')
+        axis=ttk.Combobox(options,textvariable=self.report_axis,state='readonly',width=16,values=('Elapsed Time','Date & Time'))
+        axis.pack(side='left',padx=(6,12))
+        axis.bind('<<ComboboxSelected>>',lambda event:self.refresh_reporting())
+        ttk.Button(options,text='Apply / Preview',style='Compact.TButton',command=self.refresh_reporting).pack(side='left')
         ttk.Label(p,text='Single-page PDF preview • Excel and CSV export every recorded sample (not just plotted points).',
                   foreground='#576677').pack(anchor='w',pady=(0,6))
-        area=ttk.Frame(p);area.pack(fill='both',expand=True)
+        area=ttk.LabelFrame(p,text='Preview',padding=8);area.pack(fill='both',expand=True)
         self.reporting_canvas=tk.Canvas(area,bg='#e2e8ed',highlightthickness=0)
         scroll=ttk.Scrollbar(area,orient='vertical',command=self.reporting_canvas.yview)
         scroll.pack(side='right',fill='y')
@@ -563,6 +578,7 @@ class App(tk.Tk):
         self.reporting_placeholder=ttk.Label(self.reporting_preview,text='Select a recording from History or Viewer to preview its report.')
         self.reporting_placeholder.pack(pady=40)
         self.reporting_preview_sid=None
+        self.report_range_sid=None
 
     def open_reporting(self,sid):
         if not sid or not self.store.get(sid):
@@ -580,10 +596,14 @@ class App(tk.Tk):
             return
         details=json.loads(session['details'])
         self.reporting_record.set((details.get('well') or session['name'])+'  |  '+(details.get('job') or 'Recording'))
+        if self.report_range_sid!=sid:self.reset_report_range()
+        try:time_range=self.get_report_range()
+        except ValueError as exc:
+            messagebox.showerror('Time range',str(exc),parent=self);return
         # Recreate on each visit so edits to notes/events are reflected.
         for child in self.reporting_preview.winfo_children():child.destroy()
         try:
-            fig=report_figure(self.store,sid,self.settings['unit'])
+            fig=report_figure(self.store,sid,self.settings['unit'],time_range,self.report_axis.get())
             canvas=FigureCanvasTkAgg(fig,master=self.reporting_preview)
             widget=canvas.get_tk_widget()
             widget.pack(padx=12,pady=12)
@@ -592,6 +612,28 @@ class App(tk.Tk):
             self.reporting_figure_canvas=canvas
         except Exception as exc:
             ttk.Label(self.reporting_preview,text='Preview unavailable: '+str(exc)).pack(pady=30)
+
+    def reset_report_range(self):
+        sid=getattr(self,'reporting_sid',None)
+        session=self.store.get(sid) if sid else None
+        if not session:return
+        end=session['ended'] or self.store.stats(sid)['last'] or session['started']
+        self.report_start.set('0')
+        self.report_end.set(f'{max((end-session["started"])/60,0.001):.3f}')
+        self.report_range_sid=sid
+
+    def get_report_range(self):
+        sid=getattr(self,'reporting_sid',None)
+        session=self.store.get(sid) if sid else None
+        if not session:raise ValueError('Select a recording first')
+        try:
+            start=float(self.report_start.get())
+            end=float(self.report_end.get())
+        except ValueError:raise ValueError('Enter valid numeric start and end minutes')
+        duration=max(0,((session['ended'] or self.store.stats(sid)['last'] or session['started'])-session['started'])/60)
+        if not (math.isfinite(start) and math.isfinite(end) and 0<=start<end<=duration+.002):
+            raise ValueError(f'Time range must satisfy 0 <= From < To <= {duration:.3f} minutes')
+        return (session['started']+start*60,session['started']+end*60)
 
     def export_reporting(self,fmt):
         sid=getattr(self,'reporting_sid',None)
@@ -608,6 +650,11 @@ class App(tk.Tk):
         self.exporting=True
         self.footer.config(text='Exporting '+fmt.upper()+'...')
         unit=self.settings['unit']
+        try:time_range=self.get_report_range()
+        except ValueError as exc:
+            self.exporting=False
+            messagebox.showerror('Time range',str(exc),parent=self);return
+        axis_mode=self.report_axis.get()
         def work():
             try:
                 if fmt in ('pdf','jpg'):
@@ -615,12 +662,12 @@ class App(tk.Tk):
                     target=Path(path)
                     temp=target.with_name(target.stem+'.partial'+target.suffix)
                     try:
-                        fig=report_figure(self.store,sid,unit) if fmt=='pdf' else graph_figure(self.store,sid,unit)
+                        fig=report_figure(self.store,sid,unit,time_range,axis_mode) if fmt=='pdf' else graph_figure(self.store,sid,unit,time_range,axis_mode)
                         fig.savefig(temp,format='pdf' if fmt=='pdf' else 'jpeg',dpi=180,facecolor='white')
                         temp.replace(target)
                     finally:temp.unlink(missing_ok=True)
                 else:
-                    export(self.store,sid,path,{},False)
+                    export(self.store,sid,path,{'xmin':(time_range[0]-session['started'])/60,'xmax':(time_range[1]-session['started'])/60},True)
                 self.engine.emit('exported',path=path)
             except Exception as exc:
                 self.engine.emit('export_error',text='Export failed: '+str(exc))
@@ -1389,8 +1436,8 @@ class App(tk.Tk):
 
     def scroll_page(self,event):
         page=getattr(self,'page',None)
-        if page not in ('Settings','About'):return
-        canvas=self.settings_canvas if page=='Settings' else self.about_canvas
+        if page not in ('Settings','About','Reporting'):return
+        canvas={'Settings':self.settings_canvas,'About':self.about_canvas,'Reporting':self.reporting_canvas}[page]
         target=self.winfo_containing(event.x_root,event.y_root)
         current=target
         while current is not None and current!=canvas:
