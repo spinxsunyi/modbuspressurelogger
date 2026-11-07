@@ -537,98 +537,120 @@ class App(tk.Tk):
 
     def make_reporting(self):
         p=self.pages['Reporting']
-        bar=ttk.Frame(p);bar.pack(fill='x',pady=(0,8))
-        ttk.Label(bar,text='Reporting',style='Title.TLabel').pack(side='left')
-        self.reporting_record=tk.StringVar(value='No recording selected')
-        selected=ttk.Frame(p);selected.pack(fill='x',pady=(0,10))
-        ttk.Label(selected,textvariable=self.reporting_record,font=(UI_FONT,12,'bold')).pack(side='left',padx=(0,14))
-        ttk.Button(selected,text='Select from History',style='Compact.TButton',command=lambda:self.show('History')).pack(side='left')
-
-        navigation=ttk.Frame(p);navigation.pack(fill='x',pady=(0,10))
+        ttk.Label(p,text='Reporting',style='Title.TLabel').pack(anchor='w',pady=(0,10))
+        navigation=ttk.Frame(p);navigation.pack(fill='x',pady=(0,12))
         self.report_step=1
         self.report_step_buttons=[]
-        for number,name in enumerate(('1. Time Range','2. Graph Options','3. Preview & Export'),1):
+        for number,name in enumerate(('1. Select Record','2. Select Interval','3. Preview & Export'),1):
             button=tk.Button(navigation,text=name,relief='flat',bd=1,padx=16,pady=9,
-                              command=lambda n=number:self.show_report_step(n))
+                             command=lambda n=number:self.show_report_step(n))
             button.pack(side='left',padx=(0,10))
             self.report_step_buttons.append(button)
+        self.report_steps=[ttk.Frame(p) for _ in range(3)]
+        self.reporting_record=tk.StringVar(value='No recording selected')
 
-        self.report_steps=[]
-        for _ in range(3):
-            frame=ttk.Frame(p)
-            self.report_steps.append(frame)
-
+        # Step 1: choose an existing recording. The user can return here at any time.
         one=self.report_steps[0]
-        section=ttk.LabelFrame(one,text='Step 1 — Select Reporting Interval',padding=16)
-        section.pack(fill='both',expand=True,pady=(0,10))
+        choose=ttk.LabelFrame(one,text='Step 1 — Select Record',padding=18)
+        choose.pack(fill='x',pady=(0,12))
+        ttk.Label(choose,text='Select a record from History to prepare a pressure report.',
+                  foreground='#576677').pack(anchor='w',pady=(0,12))
+        selection=ttk.Frame(choose);selection.pack(fill='x')
+        ttk.Label(selection,textvariable=self.reporting_record,font=(UI_FONT,12,'bold')).pack(side='left',padx=(0,18))
+        ttk.Button(selection,text='Select from History',style='Compact.TButton',
+                   command=lambda:self.show('History')).pack(side='left')
+        self.report_record_status=tk.StringVar(value='')
+        ttk.Label(choose,textvariable=self.report_record_status,foreground='#576677').pack(anchor='w',pady=(12,0))
+        self.report_continue_record=ttk.Button(one,text='Continue to Select Interval  >',
+                   style='Accent.TButton',command=lambda:self.show_report_step(2))
+        self.report_continue_record.pack(anchor='e')
+
+        # Step 2: combined time interval and graph appearance.
+        two=self.report_steps[1]
+        section=ttk.LabelFrame(two,text='Step 2 — Select Interval & Graph Options',padding=14)
+        section.pack(fill='both',expand=True,pady=(0,8))
         self.report_start=tk.StringVar(value='0')
         self.report_end=tk.StringVar(value='0')
         self.report_range_mode=tk.StringVar(value='full')
-        modes=ttk.Frame(section);modes.pack(fill='x',pady=(0,10))
-        ttk.Radiobutton(modes,text='Full Recording',value='full',variable=self.report_range_mode,
-                        command=self.change_report_range_mode).pack(side='left',padx=(0,25))
-        ttk.Radiobutton(modes,text='Select Time Range on Graph',value='custom',variable=self.report_range_mode,
-                        command=self.change_report_range_mode).pack(side='left')
-        fields=ttk.Frame(section);fields.pack(fill='x',pady=(0,8))
-        ttk.Label(fields,text='From (minutes)').pack(side='left')
-        self.report_from_entry=ttk.Entry(fields,textvariable=self.report_start,width=12)
-        self.report_from_entry.pack(side='left',padx=(6,16))
-        ttk.Label(fields,text='To (minutes)').pack(side='left')
-        self.report_to_entry=ttk.Entry(fields,textvariable=self.report_end,width=12)
-        self.report_to_entry.pack(side='left',padx=(6,16))
-        ttk.Label(section,text='Select a span directly on the full recording graph, or edit the minute values precisely.',
-                  foreground='#576677').pack(anchor='w',pady=(0,8))
-        scale=ttk.Frame(section);scale.pack(fill='x',pady=(0,8))
+        self.report_axis=tk.StringVar(value='Elapsed Time')
+        self.report_unit=tk.StringVar(value=self.settings['unit'])
+        self.report_events=tk.BooleanVar(value=True)
+        self.report_grid=tk.BooleanVar(value=True)
         self.report_view_xmin=tk.StringVar(value='0')
         self.report_view_xmax=tk.StringVar(value='0')
         self.report_ymin=tk.StringVar(value='')
-        self.report_ymax=tk.StringVar(value='')
-        for label,var in [('X from (min)',self.report_view_xmin),('X to (min)',self.report_view_xmax),('Y min',self.report_ymin),('Y max',self.report_ymax)]:
-            ttk.Label(scale,text=label).pack(side='left',padx=(8,3))
-            ttk.Entry(scale,textvariable=var,width=9).pack(side='left')
-        ttk.Button(scale,text='Apply Scale',style='Compact.TButton',command=self.apply_report_scale).pack(side='left',padx=8)
-        ttk.Button(scale,text='Reset Zoom',style='Compact.TButton',command=self.reset_report_zoom).pack(side='left')
+        self.report_ymax=tk.StringVar('')
+
+        controls=ttk.Frame(section);controls.pack(fill='x',pady=(0,8))
+        modes=ttk.Frame(controls);modes.pack(side='left',anchor='w')
+        ttk.Radiobutton(modes,text='Full Recording',value='full',variable=self.report_range_mode,
+                        command=self.change_report_range_mode).pack(side='left',padx=(0,22))
+        ttk.Radiobutton(modes,text='Select Time Range on Graph',value='custom',variable=self.report_range_mode,
+                        command=self.change_report_range_mode).pack(side='left')
+        axisbar=ttk.Frame(controls);axisbar.pack(side='right',anchor='e')
+        ttk.Label(axisbar,text='Time axis').pack(side='left',padx=(0,6))
+        axis=ttk.Combobox(axisbar,textvariable=self.report_axis,state='readonly',width=15,
+                          values=('Elapsed Time','Date & Time'))
+        axis.pack(side='left')
+        axis.bind('<<ComboboxSelected>>',lambda event:self.update_report_graph_options())
+
+        bounds=ttk.Frame(section);bounds.pack(fill='x',pady=(0,8))
+        ttk.Label(bounds,text='Interval from (min)').pack(side='left')
+        self.report_from_entry=ttk.Entry(bounds,textvariable=self.report_start,width=11)
+        self.report_from_entry.pack(side='left',padx=(6,15))
+        ttk.Label(bounds,text='To (min)').pack(side='left')
+        self.report_to_entry=ttk.Entry(bounds,textvariable=self.report_end,width=11)
+        self.report_to_entry.pack(side='left',padx=(6,16))
+        ttk.Label(bounds,text='Pressure unit').pack(side='left',padx=(5,6))
+        unit=ttk.Combobox(bounds,textvariable=self.report_unit,state='readonly',width=8,
+                          values=('psi','bar','kPa','MPa'))
+        unit.pack(side='left',padx=(0,14))
+        unit.bind('<<ComboboxSelected>>',lambda event:self.update_report_graph_options())
+        ttk.Checkbutton(bounds,text='Events',variable=self.report_events,
+                        command=self.update_report_graph_options).pack(side='left',padx=(0,12))
+        ttk.Checkbutton(bounds,text='Grid',variable=self.report_grid,
+                        command=self.update_report_graph_options).pack(side='left')
+
+        scale=ttk.Frame(section);scale.pack(fill='x',pady=(0,7))
+        self.report_xfrom_label=ttk.Label(scale,text='View X from (min)')
+        self.report_xfrom_label.pack(side='left')
+        ttk.Entry(scale,textvariable=self.report_view_xmin,width=19).pack(side='left',padx=(5,8))
+        ttk.Label(scale,text='to').pack(side='left')
+        ttk.Entry(scale,textvariable=self.report_view_xmax,width=19).pack(side='left',padx=(5,15))
+        self.report_y_label=ttk.Label(scale,text='Y min / max')
+        self.report_y_label.pack(side='left')
+        ttk.Entry(scale,textvariable=self.report_ymin,width=9).pack(side='left',padx=(5,5))
+        ttk.Label(scale,text='to').pack(side='left')
+        ttk.Entry(scale,textvariable=self.report_ymax,width=9).pack(side='left',padx=(5,10))
+        ttk.Button(scale,text='Apply Scale',style='Compact.TButton',
+                   command=self.apply_report_scale).pack(side='left',padx=(0,7))
+        ttk.Button(scale,text='Reset Zoom',style='Compact.TButton',
+                   command=self.reset_report_zoom).pack(side='left')
+        ttk.Label(section,text='Drag to select a reporting interval. Mouse wheel zooms the view without changing the selected interval.',
+                  foreground='#576677').pack(anchor='w',pady=(0,6))
         self.report_range_chart=ttk.Frame(section)
         self.report_range_chart.pack(fill='both',expand=True)
-        self.report_range_hint=ttk.Label(self.report_range_chart,
-                 text='Select a recording from History to display its pressure timeline.',
-                 foreground='#576677')
-        self.report_range_hint.pack(pady=55)
+        self.report_range_hint=ttk.Label(self.report_range_chart,text='Select a recording first.',
+                                          foreground='#576677')
+        self.report_range_hint.pack(pady=40)
         self.report_inline_sid=None
         self.report_range_canvas=None
-        footer=ttk.Frame(one);footer.pack(fill='x')
-        ttk.Button(footer,text='Continue to Graph Options  >',style='Compact.TButton',
-                   command=lambda:self.show_report_step(2)).pack(side='right')
-        self.change_report_range_mode()
-
-        two=self.report_steps[1]
-        ttk.Label(two,text='Step 2 — Graph options',font=(UI_FONT,12,'bold')).pack(anchor='w',pady=(0,10))
-        opts=ttk.LabelFrame(two,text='Graph appearance',padding=14);opts.pack(fill='x',pady=(0,12))
-        ttk.Label(opts,text='X-axis').grid(row=0,column=0,sticky='w',padx=(0,12),pady=6)
-        self.report_axis=tk.StringVar(value='Elapsed Time')
-        ttk.Combobox(opts,textvariable=self.report_axis,state='readonly',width=22,
-                     values=('Elapsed Time','Date & Time')).grid(row=0,column=1,sticky='w',pady=6)
-        ttk.Label(opts,text='Pressure unit').grid(row=1,column=0,sticky='w',padx=(0,12),pady=6)
-        self.report_unit=tk.StringVar(value=self.settings['unit'])
-        ttk.Combobox(opts,textvariable=self.report_unit,state='readonly',width=22,
-                     values=('psi','bar','kPa','MPa')).grid(row=1,column=1,sticky='w',pady=6)
-        self.report_events=tk.BooleanVar(value=True)
-        self.report_grid=tk.BooleanVar(value=True)
-        ttk.Checkbutton(opts,text='Show event markers',variable=self.report_events).grid(row=2,column=0,columnspan=2,sticky='w',pady=5)
-        ttk.Checkbutton(opts,text='Show gridlines',variable=self.report_grid).grid(row=3,column=0,columnspan=2,sticky='w',pady=5)
-        ttk.Button(two,text='Continue to Preview & Export  >',style='Compact.TButton',
-                   command=lambda:self.show_report_step(3)).pack(anchor='e')
+        navigation2=ttk.Frame(two);navigation2.pack(fill='x')
+        ttk.Button(navigation2,text='<  Select Record',style='Compact.TButton',
+                   command=lambda:self.show_report_step(1)).pack(side='left')
+        ttk.Button(navigation2,text='Continue to Preview & Export  >',style='Accent.TButton',
+                   command=lambda:self.show_report_step(3)).pack(side='right')
 
         three=self.report_steps[2]
-        ttk.Label(three,text='Step 3 — Preview & Export',font=(UI_FONT,12,'bold')).pack(anchor='w',pady=(0,6))
-        actions=ttk.Frame(three);actions.pack(fill='x',pady=(0,8))
-        ttk.Label(actions,text='Output type:').pack(side='left',padx=(0,8))
+        ttk.Label(three,text='Step 3 — Preview & Export',font=(UI_FONT,12,'bold')).pack(anchor='w',pady=(0,7))
+        actions=ttk.Frame(three);actions.pack(fill='x',pady=(0,9))
+        ttk.Label(actions,text='Output type:').pack(side='left',padx=(0,10))
         self.report_format=tk.StringVar(value='pdf')
-        choices=[('PDF Report','pdf'),('JPEG Graph','jpg'),('Excel — Detailed Data','xlsx'),('CSV — Detailed Data','csv')]
-        for label,fmt in choices:
+        for label,fmt in [('PDF Report','pdf'),('JPEG Graph','jpg'),
+                          ('Excel — Detailed Data','xlsx'),('CSV — Detailed Data','csv')]:
             ttk.Radiobutton(actions,text=label,value=fmt,variable=self.report_format,
                             command=self.refresh_reporting).pack(side='left',padx=(0,12))
-        ttk.Button(actions,text='Export Selected',style='Compact.TButton',
+        ttk.Button(actions,text='Export Selected',style='Accent.TButton',
                    command=lambda:self.export_reporting(self.report_format.get())).pack(side='right')
         self.report_preview_info=tk.StringVar(value='')
         ttk.Label(three,textvariable=self.report_preview_info,foreground='#576677').pack(anchor='w',pady=(0,6))
@@ -650,23 +672,25 @@ class App(tk.Tk):
 
     def show_report_step(self,step,validate=True):
         if step not in (1,2,3):return
-        if validate and step>1 and getattr(self,'reporting_sid',None):
-            try:self.get_report_range()
+        sid=getattr(self,'reporting_sid',None)
+        if step>1 and (not sid or not self.store.get(sid)):
+            messagebox.showinfo('Select Record','Choose a recording from History first.',parent=self)
+            step=1
+        elif step==3 and validate:
+            try:self.get_report_range();self.get_report_y_limits()
             except ValueError as exc:
-                messagebox.showerror('Time range',str(exc),parent=self)
-                self.show_report_step(1,validate=False)
-                return
+                messagebox.showerror('Report options',str(exc),parent=self)
+                step=2
         for frame in self.report_steps:frame.pack_forget()
         self.report_step=step
         self.report_steps[step-1].pack(fill='both',expand=True)
         for index,button in enumerate(self.report_step_buttons,1):
             active=index==step
-            button.configure(bg=TEAL if active else SURFACE,
-                             fg='white' if active else INK,
+            button.configure(bg=TEAL if active else SURFACE,fg='white' if active else INK,
                              activebackground=TEAL_DARK if active else PALE_TEAL,
-                             activeforeground='white' if active else INK,
-                             highlightthickness=0)
-        if step==1:self.refresh_inline_range_graph()
+                             activeforeground='white' if active else INK,highlightthickness=0)
+        self.report_continue_record.configure(state='normal' if sid and self.store.get(sid) else 'disabled')
+        if step==2:self.refresh_inline_range_graph()
         if step==3:self.refresh_reporting()
 
     def open_reporting(self,sid):
