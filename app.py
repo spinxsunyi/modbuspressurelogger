@@ -947,7 +947,7 @@ class App(tk.Tk):
     def refresh_reporting(self):
         if hasattr(self,'report_resolution_row'):
             if self.report_format.get() in ('xlsx','csv'):
-                self.report_resolution_row.pack(fill='x',pady=(0,8),before=self.reporting_preview.master)
+                self.report_resolution_row.pack(fill='x',pady=(0,8),before=self.reporting_canvas.master)
             else:
                 self.report_resolution_row.pack_forget()
         sid=getattr(self,'reporting_sid',None)
