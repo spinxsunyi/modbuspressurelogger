@@ -588,7 +588,13 @@ class App(tk.Tk):
             if not 1<=s['address']<=247:raise ValueError('Slave address must be 1-247')
             if s['mode']=='Modbus RTU' and not s['port']:raise ValueError('Specify a COM port')
             s['auto_connect']=self.auto.get(); tmp=DATA/'settings.tmp'; tmp.write_text(json.dumps(s,indent=2)); tmp.replace(DATA/'settings.json')
-            self.settings=s; self.buffer.clear(); self.latest=None; self.connect(); self.show('Live Monitor')
+            old_unit=self.settings['unit']
+            self.settings=s
+            if old_unit!=s['unit']:
+                # Manual scale inputs reflect the selected display unit.
+                self.live_min.set(f'{from_psi(to_psi(float(self.live_min.get()),old_unit),s["unit"]):.5f}')
+                self.live_max.set(f'{from_psi(to_psi(float(self.live_max.get()),old_unit),s["unit"]):.5f}')
+            self.buffer.clear(); self.latest=None; self.connect(); self.show('Live Monitor')
         except Exception as e:messagebox.showerror('Settings',str(e))
     def make_viewer(self):
         p=self.pages['Viewer']
@@ -1031,7 +1037,7 @@ class App(tk.Tk):
         self.status_live.pack(side='right',padx=12)
         self.status_rec=tk.Label(self.global_status.master,text='REC OFF',foreground='#777777'); self.status_rec.pack(side='right',padx=12)
         self.bind('<Configure>', self.adapt_width, add='+')
-        self.live_min=tk.StringVar(value='0');self.live_max=tk.StringVar(value='3000');self.live_auto=tk.BooleanVar(value=True)
+        self.live_min=tk.StringVar(value='0');self.live_max=tk.StringVar(value=f'{from_psi(3000,self.settings["unit"]):.4f}');self.live_auto=tk.BooleanVar(value=True)
         self.live_labels=tk.BooleanVar(value=True)
         self.live_slider=TimeScrollbar(self.lcanvas.get_tk_widget().master,self.slide_live)
         self.live_slider.pack(after=self.lcanvas.get_tk_widget(),fill='x')
@@ -1225,7 +1231,7 @@ class App(tk.Tk):
         if self.last_recording:
             lo,hi=self.recording_extrema(self.last_recording)
             for label,value in zip(self.metric,(lo,hi)):
-                label.config(text='—' if value is None else f'{value:,.2f} {self.store.get(self.last_recording)["unit"]}')
+                label.config(text='—' if value is None else f'{from_psi(value,self.settings["unit"]):,.2f} {self.settings["unit"]}')
             self.paint_live_events()
         if self.viewer_sid and self.page=='Viewer':
             self.update_viewer_summary()
