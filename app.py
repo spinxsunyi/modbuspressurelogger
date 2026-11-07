@@ -710,9 +710,11 @@ class App(tk.Tk):
         if not session:
             self.reporting_sid=None
             self.reporting_record.set('No recording selected')
+            self.report_record_status.set('No recording chosen yet.')
             return
         details=json.loads(session['details'])
         self.reporting_record.set((details.get('well') or session['name'])+'  |  '+(details.get('job') or 'Recording'))
+        self.report_record_status.set('Source: '+session['mode']+'   •   Started: '+stamp(session['started'],json.loads(session['settings']).get('utc_offset',8)).replace('T',' ')[:19])
         if self.report_range_sid!=sid:self.reset_report_range()
         try:time_range=self.get_report_range()
         except ValueError as exc:
