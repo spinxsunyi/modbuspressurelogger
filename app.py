@@ -9,6 +9,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolb
 from core import DEFAULTS,FIELDS,Store,Engine
 from instance import InstanceLock
 from exports import export,stamp
+from app_icon import set_window_icon
 
 UI_FONT='Segoe UI' if os.name=='nt' else 'Helvetica'
 NAVY = '#17334c'
@@ -63,7 +64,7 @@ class TimeScrollbar(ttk.Scrollbar):
 
 class App(tk.Tk):
     def __init__(self):
-        super().__init__(); self.title('Digital Pressure Recorder 0.2'); self.geometry(f'{min(1440,self.winfo_screenwidth()-40)}x{min(900,self.winfo_screenheight()-100)}'); self.minsize(820,560)
+        super().__init__(); self.title('Digital Pressure Recorder 0.2'); set_window_icon(self); self.geometry(f'{min(1440,self.winfo_screenwidth()-40)}x{min(900,self.winfo_screenheight()-100)}'); self.minsize(820,560)
         DATA.mkdir(parents=True,exist_ok=True)
         self.instance_lock=InstanceLock(DATA/'app.lock')
         self.exporting=False
