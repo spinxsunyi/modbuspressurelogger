@@ -308,28 +308,94 @@ class App(tk.Tk):
         label=simpledialog.askstring('Add event','Event label (timestamp captured now):',parent=self)
         if label:self.store.event(sid,ts,label.strip()); self.footer.config(text='Event saved')
     def make_history(self):
-        p=self.pages['History']; ttk.Label(p,text='Recordings',style='Title.TLabel').pack(anchor='w')
-        bar=ttk.Frame(p); bar.pack(fill='x',pady=12); self.search=tk.StringVar()
-        ttk.Entry(bar,textvariable=self.search,width=45).pack(side='left'); ttk.Button(bar,text='Search / Refresh',command=self.refresh_history).pack(side='left',padx=8)
-        ttk.Label(bar,text='Search well, job, engineer or record ID').pack(side='left')
-        cols=('start','well','job','duration','mode','status'); self.history=ttk.Treeview(p,columns=cols,show='headings',selectmode='browse')
-        widths={'start':(170,130),'well':(220,110),'job':(240,120),
-                'duration':(115,80),'mode':(135,85),'status':(130,85)}
+        p=self.pages['History']
+        heading=ttk.Frame(p);heading.pack(fill='x',pady=(0,6))
+        ttk.Label(heading,text='Recordings',style='Title.TLabel').pack(side='left')
+        self.history_count=ttk.Label(heading,text='0 recordings',foreground='#576677')
+        self.history_count.pack(side='right',pady=(9,0))
+
+        bar=ttk.Frame(p);bar.pack(fill='x',pady=(2,10))
+        self.search=tk.StringVar()
+        search_box=ttk.Entry(bar,textvariable=self.search,width=43)
+        search_box.pack(side='left',fill='x',expand=True)
+        search_box.bind('<Return>',lambda event:self.refresh_history())
+        ttk.Button(bar,text='Search',style='Compact.TButton',
+                   command=self.refresh_history).pack(side='left',padx=(8,4))
+        ttk.Button(bar,text='Clear',style='Compact.TButton',
+                   command=self.clear_history_search).pack(side='left',padx=(0,4))
+        ttk.Button(bar,text='Refresh',style='Compact.TButton',
+                   command=self.refresh_history).pack(side='left')
+        ttk.Label(p,text='Search by well, job, engineer or record ID. Double-click a recording to open it.',
+                  foreground='#576677').pack(anchor='w',pady=(0,8))
+
+        table=ttk.Frame(p);table.pack(fill='both',expand=True)
+        cols=('start','well','job','duration','mode','status')
+        self.history=ttk.Treeview(table,columns=cols,show='headings',selectmode='browse')
+        widths={'start':(180,155),'well':(280,130),'job':(260,115),
+                'duration':(115,85),'mode':(145,100),'status':(140,90)}
+        labels={'start':'Started','well':'Well / Recording','job':'Job',
+                'duration':'Duration','mode':'Source','status':'Status'}
         for col in cols:
-            self.history.heading(col,text=col.title())
+            self.history.heading(col,text=labels[col])
             width,minimum=widths[col]
-            self.history.column(col,width=width,minwidth=minimum,stretch=True)
-        self.history.pack(fill='both',expand=True); self.history.bind('<Double-1>',lambda e:self.open_selected())
-        ttk.Button(p,text='Open in Viewer',style='Accent.TButton',command=self.open_selected).pack(anchor='e',pady=12)
+            self.history.column(col,width=width,minwidth=minimum,stretch=True,
+                                anchor='w' if col in ('start','well','job') else 'center')
+        vertical=ttk.Scrollbar(table,orient='vertical',command=self.history.yview)
+        horizontal=ttk.Scrollbar(table,orient='horizontal',command=self.history.xview)
+        self.history.configure(yscrollcommand=vertical.set,xscrollcommand=horizontal.set)
+        table.rowconfigure(0,weight=1);table.columnconfigure(0,weight=1)
+        self.history.grid(row=0,column=0,sticky='nsew')
+        vertical.grid(row=0,column=1,sticky='ns')
+        horizontal.grid(row=1,column=0,sticky='ew')
+        self.history.tag_configure('alternate',background='#edf4f6')
+        self.history.bind('<Double-1>',lambda e:self.open_selected())
+        self.history.bind('<<TreeviewSelect>>',self.update_history_selection)
+        footer=ttk.Frame(p);footer.pack(fill='x',pady=(10,0))
+        self.history_selection=ttk.Label(footer,text='Select a recording to review',foreground='#576677')
+        self.history_selection.pack(side='left')
+        self.history_open=ttk.Button(footer,text='Open in Viewer',style='Accent.TButton',
+                                     command=self.open_selected,state='disabled')
+        self.history_open.pack(side='right')
+
+    def clear_history_search(self):
+        self.search.set('')
+        self.refresh_history()
+
+    def update_history_selection(self,event=None):
+        chosen=self.history.selection()
+        valid=bool(chosen and self.history.exists(chosen[0]))
+        self.history_open.configure(state='normal' if valid else 'disabled')
+        self.history_selection.configure(text='1 recording selected' if valid else 'Select a recording to review')
+
     def refresh_history(self):
-        for i in self.history.get_children():self.history.delete(i)
-        for s in self.store.sessions(self.search.get()):
-            d=json.loads(s['details']); end=s['ended'] or self.store.stats(s['id'])['last'] or s['started']
-            self.history.tag_configure('alternate',background='#edf4f6')
-            self.history.insert('', 'end',iid=s['id'],tags=('alternate',) if len(self.history.get_children())%2 else (),values=(stamp(s['started'],self.settings['utc_offset'])[:19].replace('T',' '),d.get('well') or s['name'],d.get('job',''),f"{max(0,end-s['started'])/60:.1f} min",s['mode'],s['state']))
+        previous=self.history.selection()
+        previous=previous[0] if previous else None
+        for item in self.history.get_children():self.history.delete(item)
+        records=self.store.sessions(self.search.get().strip())
+        for index,session in enumerate(records):
+            details=json.loads(session['details'])
+            finish=session['ended'] or self.store.stats(session['id'])['last'] or session['started']
+            duration=max(0,finish-session['started'])
+            minutes,seconds=divmod(int(duration),60)
+            duration_text=f'{minutes}m {seconds:02d}s'
+            self.history.insert('','end',iid=session['id'],
+                tags=('alternate',) if index%2 else (),
+                values=(stamp(session['started'],self.settings['utc_offset'])[:19].replace('T',' '),
+                        details.get('well') or session['name'],
+                        details.get('job') or '—',
+                        duration_text,session['mode'],session['state']))
+        count=len(records)
+        self.history_count.configure(text=f'{count} recording'+('' if count==1 else 's')+
+                                     (' found' if self.search.get().strip() else ''))
+        if previous and self.history.exists(previous):
+            self.history.selection_set(previous)
+            self.history.see(previous)
+        self.update_history_selection()
+
     def open_selected(self):
-        sel=self.history.selection()
-        if sel:self.load_viewer(sel[0])
+        chosen=self.history.selection()
+        if chosen and self.history.exists(chosen[0]):
+            self.load_viewer(chosen[0])
     def make_settings(self):
         # Keep every setting reachable when the window is narrow or display scaling is high.
         host=self.pages['Settings']
