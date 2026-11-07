@@ -31,31 +31,21 @@ def export(store,sid,path,view,selected=False,resolution=None):
         view.pop('xmin',None); view.pop('xmax',None)
     if resolution not in (None,0.5,1.0,60.0):
         raise ValueError('Unsupported data resolution')
-    raw_columns=['timestamp','elapsed_seconds','pressure','unit','quality','raw_register','status_register','latency_seconds']
-    summary_columns=['timestamp','elapsed_seconds','average_pressure_psi','minimum_pressure_psi','maximum_pressure_psi','sample_count','unit']
-    columns=raw_columns if resolution is None else summary_columns
+    columns=['timestamp','elapsed_seconds','pressure','unit','quality','raw_register','status_register','latency_seconds']
     def values(r): return [stamp(r['ts'],offset),r['elapsed'],r['value'],'psi',r['quality'],r['raw'],r['status'],r['latency']]
-    def summarized(cursor):
-        # Buckets are anchored to the recording start; invalid readings are excluded.
-        bucket=None; count=0; total=0.0; minimum=maximum=None
-        def result(index):
-            ts=session['started']+index*resolution
-            return [stamp(ts,offset),round(index*resolution,3),total/count,minimum,maximum,count,'psi']
-        for r in cursor:
-            if r['quality']!='OK' or r['value'] is None or not math.isfinite(r['value']):
-                continue
-            index=int(math.floor((r['ts']-session['started'])/resolution+1e-9))
-            if bucket is not None and index!=bucket:
-                yield result(bucket)
-                count=0;total=0.0;minimum=maximum=None
-            bucket=index
-            value=r['value'];count+=1;total+=value
-            minimum=value if minimum is None else min(minimum,value)
-            maximum=value if maximum is None else max(maximum,value)
-        if bucket is not None:
-            yield result(bucket)
     def data_rows(cursor):
-        return (values(r) for r in cursor) if resolution is None else summarized(cursor)
+        # Retain actual samples only. Choose the first available reading at or
+        # after each target time, anchored to the recording's start timestamp.
+        if resolution is None:
+            for r in cursor: yield values(r)
+            return
+        next_target=None
+        for r in cursor:
+            if next_target is None:
+                next_target=session['started']+math.ceil(max(0,r['ts']-session['started'])/resolution-1e-9)*resolution
+            if r['ts']+1e-9 < next_target: continue
+            yield values(r)
+            next_target+=max(1,math.floor((r['ts']-next_target)/resolution)+1)*resolution
     try:
         with store.connect() as c:
             c.execute('BEGIN')
@@ -64,7 +54,11 @@ def export(store,sid,path,view,selected=False,resolution=None):
             cursor=c.execute('SELECT * FROM samples WHERE session=? AND ts>=? AND ts<=? ORDER BY ts,id',(sid,lo,hi))
             if path.suffix=='.csv':
                 with tmp.open('w',newline='',encoding='utf-8-sig') as f:
-                    w=csv.writer(f); w.writerow(columns)
+                    w=csv.writer(f)
+                    w.writerow(['# Recording acquisition interval (configured)',str(settings.get('interval','Unknown'))+' s'])
+                    w.writerow(['# Export resolution','All Data' if resolution is None else f'{resolution:g} s'])
+                    w.writerow(['# Data treatment','Original samples' if resolution is None else 'Downsampled: original samples retained; no averaging or interpolation'])
+                    w.writerow([]);w.writerow(columns)
                     for row_values in data_rows(cursor): w.writerow(row_values)
             elif path.suffix=='.xlsx':
                 import xlsxwriter
@@ -89,7 +83,8 @@ def export(store,sid,path,view,selected=False,resolution=None):
                           'Start':stamp(session['started'],offset),'End':stamp(session['ended'],offset) if session['ended'] else 'In progress',
                           'Exported at':stamp(time.time(),offset),'Selected from':stamp(lo,offset),
                           'Selected to':stamp(hi,offset),'Data resolution':'All Data' if resolution is None else f'{resolution:g} seconds',
-                          'Aggregation':'Valid readings: mean, min, max and count' if resolution is not None else 'Original samples',
+                          'Recording acquisition interval (configured)':str(settings.get('interval','Unknown'))+' s',
+                          'Data treatment':'Original samples' if resolution is None else 'Downsampled original samples (no averaging or interpolation)',
                           'Recording minimum (psi)':extrema[0],'Recording maximum (psi)':extrema[1]}
                     for n,(key,value) in enumerate(meta.items(),6):
                         sh.write(n,0,key,label_style);sh.write(n,1,str(value if value is not None else ''),value_style)
