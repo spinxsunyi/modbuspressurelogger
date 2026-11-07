@@ -542,31 +542,72 @@ class App(tk.Tk):
         ttk.Button(bar,text='Select from History',style='Compact.TButton',
                    command=lambda:self.show('History')).pack(side='right')
         self.reporting_record=tk.StringVar(value='No recording selected')
-        ttk.Label(p,textvariable=self.reporting_record,font=(UI_FONT,12,'bold')).pack(anchor='w',pady=(0,6))
-        actions=ttk.Frame(p);actions.pack(fill='x',pady=(0,8))
-        ttk.Label(actions,text='Export:').pack(side='left',padx=(0,10))
-        for label,fmt in [('PDF Report','pdf'),('JPEG Graph','jpg'),('Excel — Detailed Data','xlsx'),('CSV — Detailed Data','csv')]:
-            ttk.Button(actions,text=label,style='Compact.TButton',
-                       command=lambda f=fmt:self.export_reporting(f)).pack(side='left',padx=(0,8))
-        options=ttk.Frame(p);options.pack(fill='x',pady=(0,8))
-        ttk.Label(options,text='Time range (elapsed minutes):').pack(side='left',padx=(0,8))
+        ttk.Label(p,textvariable=self.reporting_record,font=(UI_FONT,12,'bold')).pack(anchor='w',pady=(0,8))
+
+        navigation=ttk.Frame(p);navigation.pack(fill='x',pady=(0,10))
+        self.report_step=1
+        self.report_step_buttons=[]
+        for number,name in enumerate(('1. Time Range','2. Graph Options','3. Preview & Export'),1):
+            button=ttk.Button(navigation,text=name,style='Compact.TButton',
+                              command=lambda n=number:self.show_report_step(n))
+            button.pack(side='left',padx=(0,10))
+            self.report_step_buttons.append(button)
+
+        self.report_steps=[]
+        for _ in range(3):
+            frame=ttk.Frame(p)
+            self.report_steps.append(frame)
+
+        one=self.report_steps[0]
+        ttk.Label(one,text='Step 1 — Select reporting interval',font=(UI_FONT,12,'bold')).pack(anchor='w',pady=(0,8))
+        options=ttk.Frame(one);options.pack(fill='x',pady=(0,8))
         self.report_start=tk.StringVar(value='0')
         self.report_end=tk.StringVar(value='0')
-        ttk.Label(options,text='From').pack(side='left')
-        ttk.Entry(options,textvariable=self.report_start,width=9).pack(side='left',padx=(4,9))
-        ttk.Label(options,text='To').pack(side='left')
-        ttk.Entry(options,textvariable=self.report_end,width=9).pack(side='left',padx=(4,9))
-        ttk.Button(options,text='Select Time Range',style='Compact.TButton',command=self.select_report_range).pack(side='left',padx=(0,8))
-        ttk.Button(options,text='Full recording',style='Compact.TButton',command=self.reset_report_and_preview).pack(side='left',padx=(0,16))
-        ttk.Label(options,text='Graph X-axis:').pack(side='left')
+        ttk.Label(options,text='From (minutes)').pack(side='left')
+        ttk.Entry(options,textvariable=self.report_start,width=12).pack(side='left',padx=(6,16))
+        ttk.Label(options,text='To (minutes)').pack(side='left')
+        ttk.Entry(options,textvariable=self.report_end,width=12).pack(side='left',padx=(6,16))
+        ttk.Button(options,text='Select on Graph',style='Compact.TButton',
+                   command=self.select_report_range).pack(side='left',padx=(0,8))
+        ttk.Button(options,text='Full Recording',style='Compact.TButton',
+                   command=self.reset_report_range).pack(side='left')
+        ttk.Label(one,text='Use Select on Graph to drag across the full pressure timeline, or enter precise elapsed minutes.',
+                  foreground='#576677').pack(anchor='w',pady=(4,12))
+        ttk.Button(one,text='Continue to Graph Options  >',style='Compact.TButton',
+                   command=lambda:self.show_report_step(2)).pack(anchor='e')
+
+        two=self.report_steps[1]
+        ttk.Label(two,text='Step 2 — Graph options',font=(UI_FONT,12,'bold')).pack(anchor='w',pady=(0,10))
+        opts=ttk.LabelFrame(two,text='Graph appearance',padding=14);opts.pack(fill='x',pady=(0,12))
+        ttk.Label(opts,text='X-axis').grid(row=0,column=0,sticky='w',padx=(0,12),pady=6)
         self.report_axis=tk.StringVar(value='Elapsed Time')
-        axis=ttk.Combobox(options,textvariable=self.report_axis,state='readonly',width=16,values=('Elapsed Time','Date & Time'))
-        axis.pack(side='left',padx=(6,12))
-        axis.bind('<<ComboboxSelected>>',lambda event:self.refresh_reporting())
-        ttk.Button(options,text='Apply / Preview',style='Compact.TButton',command=self.refresh_reporting).pack(side='left')
-        ttk.Label(p,text='Single-page PDF preview • Excel and CSV export every recorded sample (not just plotted points).',
-                  foreground='#576677').pack(anchor='w',pady=(0,6))
-        area=ttk.LabelFrame(p,text='Preview',padding=8);area.pack(fill='both',expand=True)
+        ttk.Combobox(opts,textvariable=self.report_axis,state='readonly',width=22,
+                     values=('Elapsed Time','Date & Time')).grid(row=0,column=1,sticky='w',pady=6)
+        ttk.Label(opts,text='Pressure unit').grid(row=1,column=0,sticky='w',padx=(0,12),pady=6)
+        self.report_unit=tk.StringVar(value=self.settings['unit'])
+        ttk.Combobox(opts,textvariable=self.report_unit,state='readonly',width=22,
+                     values=('psi','bar','kPa','MPa')).grid(row=1,column=1,sticky='w',pady=6)
+        self.report_events=tk.BooleanVar(value=True)
+        self.report_grid=tk.BooleanVar(value=True)
+        ttk.Checkbutton(opts,text='Show event markers',variable=self.report_events).grid(row=2,column=0,columnspan=2,sticky='w',pady=5)
+        ttk.Checkbutton(opts,text='Show gridlines',variable=self.report_grid).grid(row=3,column=0,columnspan=2,sticky='w',pady=5)
+        ttk.Button(two,text='Continue to Preview & Export  >',style='Compact.TButton',
+                   command=lambda:self.show_report_step(3)).pack(anchor='e')
+
+        three=self.report_steps[2]
+        ttk.Label(three,text='Step 3 — Preview & Export',font=(UI_FONT,12,'bold')).pack(anchor='w',pady=(0,6))
+        actions=ttk.Frame(three);actions.pack(fill='x',pady=(0,8))
+        ttk.Label(actions,text='Output type:').pack(side='left',padx=(0,8))
+        self.report_format=tk.StringVar(value='pdf')
+        choices=[('PDF Report','pdf'),('JPEG Graph','jpg'),('Excel — Detailed Data','xlsx'),('CSV — Detailed Data','csv')]
+        for label,fmt in choices:
+            ttk.Radiobutton(actions,text=label,value=fmt,variable=self.report_format,
+                            command=self.refresh_reporting).pack(side='left',padx=(0,12))
+        ttk.Button(actions,text='Export Selected',style='Compact.TButton',
+                   command=lambda:self.export_reporting(self.report_format.get())).pack(side='right')
+        self.report_preview_info=tk.StringVar(value='')
+        ttk.Label(three,textvariable=self.report_preview_info,foreground='#576677').pack(anchor='w',pady=(0,6))
+        area=ttk.LabelFrame(three,text='Preview',padding=8);area.pack(fill='both',expand=True)
         self.reporting_canvas=tk.Canvas(area,bg='#e2e8ed',highlightthickness=0)
         scroll=ttk.Scrollbar(area,orient='vertical',command=self.reporting_canvas.yview)
         scroll.pack(side='right',fill='y')
@@ -576,16 +617,33 @@ class App(tk.Tk):
         self.reporting_window=self.reporting_canvas.create_window((0,0),window=self.reporting_preview,anchor='n')
         self.reporting_preview.bind('<Configure>',lambda e:self.reporting_canvas.configure(scrollregion=self.reporting_canvas.bbox('all')))
         self.reporting_canvas.bind('<Configure>',lambda e:self.reporting_canvas.coords(self.reporting_window,e.width/2,0))
-        self.reporting_placeholder=ttk.Label(self.reporting_preview,text='Select a recording from History or Viewer to preview its report.')
+        self.reporting_placeholder=ttk.Label(self.reporting_preview,text='Select a recording to preview its report.')
         self.reporting_placeholder.pack(pady=40)
         self.reporting_preview_sid=None
         self.report_range_sid=None
+        self.show_report_step(1,validate=False)
+
+    def show_report_step(self,step,validate=True):
+        if step not in (1,2,3):return
+        if validate and step>1 and getattr(self,'reporting_sid',None):
+            try:self.get_report_range()
+            except ValueError as exc:
+                messagebox.showerror('Time range',str(exc),parent=self)
+                self.show_report_step(1,validate=False)
+                return
+        for frame in self.report_steps:frame.pack_forget()
+        self.report_step=step
+        self.report_steps[step-1].pack(fill='both',expand=True)
+        for index,button in enumerate(self.report_step_buttons,1):
+            button.state(['disabled'] if index==step else ['!disabled'])
+        if step==3:self.refresh_reporting()
 
     def open_reporting(self,sid):
         if not sid or not self.store.get(sid):
             messagebox.showwarning('Reporting','Please select a valid recording.',parent=self)
             return
         self.reporting_sid=sid
+        self.show_report_step(1,validate=False)
         self.show('Reporting')
 
     def refresh_reporting(self):
@@ -601,10 +659,16 @@ class App(tk.Tk):
         try:time_range=self.get_report_range()
         except ValueError as exc:
             messagebox.showerror('Time range',str(exc),parent=self);return
+        if self.report_step!=3:return
         # Recreate on each visit so edits to notes/events are reflected.
         for child in self.reporting_preview.winfo_children():child.destroy()
         try:
-            fig=report_figure(self.store,sid,self.settings['unit'],time_range,self.report_axis.get())
+            fmt=self.report_format.get()
+            self.report_preview_info.set('PDF report preview' if fmt=='pdf' else 'JPEG graph preview' if fmt=='jpg' else 'Detailed recorded data will be exported; graph preview is not applicable.')
+            if fmt in ('xlsx','csv'):
+                ttk.Label(self.reporting_preview,text='Detailed data export includes original samples within the selected time range.').pack(padx=24,pady=40)
+                return
+            fig=report_figure(self.store,sid,self.report_unit.get(),time_range,self.report_axis.get(),self.report_events.get(),self.report_grid.get()) if fmt=='pdf' else graph_figure(self.store,sid,self.report_unit.get(),time_range,self.report_axis.get(),self.report_events.get(),self.report_grid.get())
             canvas=FigureCanvasTkAgg(fig,master=self.reporting_preview)
             widget=canvas.get_tk_widget()
             widget.pack(padx=12,pady=12)
@@ -690,7 +754,8 @@ class App(tk.Tk):
             if not (math.isfinite(lo) and math.isfinite(hi) and 0<=lo<hi<=duration+.002):
                 messagebox.showerror('Invalid range',f'Choose 0 <= From < To <= {duration:.3f} minutes.',parent=win);return
             self.report_start.set(f'{lo:.3f}');self.report_end.set(f'{hi:.3f}')
-            win.destroy();self.refresh_reporting()
+            win.destroy()
+            if self.report_step==3:self.refresh_reporting()
         def reset():
             left.set('0');right.set(f'{duration:.3f}');redraw(0,duration)
         buttons=ttk.Frame(body);buttons.pack(fill='x',pady=(8,0))
@@ -735,7 +800,7 @@ class App(tk.Tk):
         if not path:return
         self.exporting=True
         self.footer.config(text='Exporting '+fmt.upper()+'...')
-        unit=self.settings['unit']
+        unit=self.report_unit.get()
         try:time_range=self.get_report_range()
         except ValueError as exc:
             self.exporting=False
@@ -748,7 +813,7 @@ class App(tk.Tk):
                     target=Path(path)
                     temp=target.with_name(target.stem+'.partial'+target.suffix)
                     try:
-                        fig=report_figure(self.store,sid,unit,time_range,axis_mode) if fmt=='pdf' else graph_figure(self.store,sid,unit,time_range,axis_mode)
+                        fig=report_figure(self.store,sid,unit,time_range,axis_mode,self.report_events.get(),self.report_grid.get()) if fmt=='pdf' else graph_figure(self.store,sid,unit,time_range,axis_mode,self.report_events.get(),self.report_grid.get())
                         fig.savefig(temp,format='pdf' if fmt=='pdf' else 'jpeg',dpi=180,facecolor='white')
                         temp.replace(target)
                     finally:temp.unlink(missing_ok=True)
