@@ -1,11 +1,29 @@
 """Single-page report preview and PDF/JPEG export for Digital Pressure Recorder."""
 import json
 import math
+import re
 from datetime import datetime
 from matplotlib.figure import Figure
 from matplotlib.ticker import MaxNLocator, FuncFormatter
 from exports import stamp
 from units import from_psi
+
+def report_name(session):
+    """Readable, Windows-safe basename shared by PDF, JPEG and detailed exports."""
+    details=json.loads(session['details'])
+    offset=json.loads(session['settings']).get('utc_offset',8)
+    local=stamp(session['started'],offset)
+    date=local[:10]
+    def clean(value):
+        value=re.sub(r'[<>:"/\\\\|?*\\x00-\\x1f]', ' ',str(value or ''))
+        value=re.sub(r'\\s+',' ',value).strip(' .')
+        return value[:90].rstrip(' .')
+    fields=[clean(details.get(key)) for key in ('well','job')]
+    fields=[value for value in fields if value]
+    if fields:
+        return '_'.join(fields+[date])
+    return 'Digital Pressure Report_'+re.sub(r'[^0-9]','',local[:19])
+
 
 def report_figure(store, sid, unit='psi', time_range=None, time_axis='Elapsed Time',show_events=True,show_grid=True,y_limits=None):
     session=store.get(sid)
@@ -125,7 +143,7 @@ def graph_figure(store,sid,unit='psi',time_range=None,time_axis='Elapsed Time',s
         x=(e['ts']-start)/60;ax.axvline(x,color='#bb852c',ls='--',lw=.8)
         if i<=30:ax.annotate(str(i),(x,.96),xycoords=('data','axes fraction'),ha='center',va='top',fontsize=8)
     configure_time_axis(ax,start,offset,time_axis)
-    ax.set(title=session['name'],ylabel=f'Pressure ({unit})')
+    ax.set(title=report_name(session),ylabel=f'Pressure ({unit})')
     if y_limits is not None:ax.set_ylim(*y_limits)
     if time_range is not None:ax.set_xlim((time_range[0]-start)/60,(time_range[1]-start)/60)
     ax.grid(alpha=.2,visible=show_grid);fig.tight_layout()
