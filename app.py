@@ -1843,8 +1843,18 @@ class App(tk.Tk):
     def paint_viewer(self):
         v=self.view_values(); ax=self.vax; ax.clear(); start=self.vsession['started']
         ax.plot([(r['ts']-start)/60 for r in self.vrows],[r['value'] if r['quality']=='OK' and r['value'] is not None else math.nan for r in self.vrows],color='#008b92',lw=1.1)
-        from matplotlib.ticker import FuncFormatter, MaxNLocator
-        ax.xaxis.set_major_locator(MaxNLocator(nbins=5, min_n_ticks=2))
+        from matplotlib.ticker import FuncFormatter, MaxNLocator, MultipleLocator
+        # History uses the same fixed engineering time divisions as Live Monitor.
+        # The X values are elapsed minutes, so convert configured seconds to minutes.
+        history_grid={'1 min':(10,2),'5 min':(60,12),'10 min':(120,30),
+                      '15 min':(180,30),'30 min':(300,60),'1 hour':(600,120),
+                      '12 hours':(3600,900),'24 hours':(7200,1800)}
+        if self.history_window.get() in history_grid:
+            major,minor=history_grid[self.history_window.get()]
+            ax.xaxis.set_major_locator(MultipleLocator(major/60))
+            ax.xaxis.set_minor_locator(MultipleLocator(minor/60))
+        else:
+            ax.xaxis.set_major_locator(MaxNLocator(nbins=5,min_n_ticks=2))
         def time_label(x,pos):
             if self.viewer_time_display.get()=='Elapsed time':
                 seconds=int(round(x*60))
@@ -1857,6 +1867,8 @@ class App(tk.Tk):
                xlim=(v['xmin'],v['xmax']),ylim=(v['ymin'],v['ymax']))
         ax.yaxis.set_major_formatter(FuncFormatter(lambda p,pos:f'{from_psi(p,self.settings["unit"]):,.1f}'))
         apply_engineering_grid(ax)
+        if self.history_window.get() in history_grid:
+            ax.xaxis.set_minor_locator(MultipleLocator(history_grid[self.history_window.get()][1]/60))
         if self.viewer_time_display.get()=='Date & time':
             from datetime import datetime,timezone,timedelta
             date=datetime.fromtimestamp(start+v['xmin']*60,timezone(timedelta(hours=self.settings['utc_offset']))).strftime('%d %b %Y')
