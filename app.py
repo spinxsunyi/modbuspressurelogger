@@ -111,6 +111,12 @@ class App(tk.Tk):
         style.configure('Compact.TButton',padding=(6,3),font=(UI_FONT,9),background='#edf2f6',foreground=INK,borderwidth=1)
         style.map('Compact.TButton',background=[('pressed','#cddde7'),('active','#dce8ef')])
         style.map('TButton',background=[('pressed','#cddde7'),('active','#dce8ef')])
+        # Read-only report dropdowns remain visibly enabled (white field, dark text).
+        style.configure('Report.TCombobox',fieldbackground='white',background='white',
+                        foreground=INK,selectbackground='white',selectforeground=INK)
+        style.map('Report.TCombobox',fieldbackground=[('readonly','white')],
+                  foreground=[('readonly',INK)],selectbackground=[('readonly','white')],
+                  selectforeground=[('readonly',INK)])
         style.configure('Accent.TButton',background=TEAL,foreground='white',padding=(14,9),font=(UI_FONT,10,'bold'))
         # Disabled primary actions must lose their accent fill, not only dim the text.
         # State order matters: disabled is evaluated before active/pressed.
@@ -629,7 +635,7 @@ class App(tk.Tk):
                         command=self.change_report_range_mode).pack(side='left')
         axisbar=ttk.Frame(controls);axisbar.pack(side='right',anchor='e')
         ttk.Label(axisbar,text='Time axis').pack(side='left',padx=(0,6))
-        axis=ttk.Combobox(axisbar,textvariable=self.report_axis,state='readonly',width=15,
+        axis=ttk.Combobox(axisbar,textvariable=self.report_axis,state='readonly',style='Report.TCombobox',width=15,
                           values=('Elapsed Time','Date & Time'))
         axis.pack(side='left')
         axis.bind('<<ComboboxSelected>>',lambda event:self.update_report_graph_options())
@@ -642,7 +648,7 @@ class App(tk.Tk):
         self.report_to_entry=ttk.Entry(bounds,textvariable=self.report_end,width=11)
         self.report_to_entry.pack(side='left',padx=(6,16))
         ttk.Label(bounds,text='Pressure unit').pack(side='left',padx=(5,6))
-        unit=ttk.Combobox(bounds,textvariable=self.report_unit,state='readonly',width=8,
+        unit=ttk.Combobox(bounds,textvariable=self.report_unit,state='readonly',style='Report.TCombobox',width=8,
                           values=('psi','bar','kPa','MPa'))
         unit.pack(side='left',padx=(0,14))
         unit.bind('<<ComboboxSelected>>',lambda event:self.update_report_graph_options())
