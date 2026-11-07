@@ -42,7 +42,13 @@ def test_persistence_and_exports(tmp_path):
     with zipfile.ZipFile(tmp_path/'test.xlsx') as z:assert b'<f>' not in z.read('xl/worksheets/sheet1.xml')
     export(st,sid,tmp_path/'range.csv',{**view,'xmin':.025,'xmax':.05},True)
     import csv
-    with open(tmp_path/'range.csv',encoding='utf-8-sig') as f:assert len(list(csv.reader(f)))==5
+    with open(tmp_path/'range.csv',encoding='utf-8-sig',newline='') as f:
+        lines=list(csv.reader(f))
+    assert lines[0][0].startswith('# Recording acquisition interval')
+    assert lines[4][0]=='timestamp'
+    samples=list(csv.DictReader([','.join(row) for row in lines[4:]]))
+    assert len(samples)==4
+    assert [float(row['elapsed_seconds']) for row in samples]==[1.5,2.0,2.5,3.0]
     interrupted=st.start(DEFAULTS);st.recover();assert st.get(interrupted)['state']=='Interrupted'
 
 def test_plot_retains_peak_and_gap(tmp_path):
