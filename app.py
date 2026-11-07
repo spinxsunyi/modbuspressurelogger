@@ -199,7 +199,7 @@ class App(tk.Tk):
         self.drop=tk.BooleanVar(); ttk.Checkbutton(top,text='Simulate disconnect',variable=self.drop,command=lambda:self.engine.send('drop',self.drop.get())).pack(side='right')
         body=ttk.Panedwindow(p,orient='horizontal'); body.pack(fill='both',expand=True,pady=(7,4))
         main=ttk.Frame(body); self.details_panel=ttk.LabelFrame(body,text='Recording details  |  autosaved',padding=10); body.add(main,weight=5); body.add(self.details_panel,weight=1); self.live_pane=body
-        readings=ttk.Frame(main);readings.pack(fill='x',pady=(0,6))
+        readings=ttk.Frame(main);readings.pack(fill='x',pady=(0,4))
         for col in range(3):readings.columnconfigure(col,weight=1,uniform='metric')
         def metric_card(column,title,highlight=False):
             bg=PALE_TEAL if highlight else SURFACE
@@ -207,7 +207,7 @@ class App(tk.Tk):
                            highlightbackground='#a9d6d4' if highlight else BORDER)
             panel.grid(row=0,column=column,sticky='nsew',padx=(0,8) if column<2 else (0,0))
             tk.Label(panel,text=title,bg=bg,fg=NAVY,font=(UI_FONT,11,'bold'),
-                     anchor='w').pack(fill='x',padx=12,pady=(6,0))
+                     anchor='w').pack(fill='x',padx=12,pady=(4,0))
             return panel,bg
         live_card,live_bg=metric_card(0,'Live pressure',True)
         self.value=tk.Label(live_card,text='—',font=(UI_FONT,25,'bold'),bg=live_bg,
@@ -215,13 +215,13 @@ class App(tk.Tk):
         self.value.pack(fill='x',padx=12)
         self.reading_status=tk.Label(live_card,text='Waiting for first reading',
                                      bg=live_bg,fg=INK,font=(UI_FONT,9),anchor='w')
-        self.reading_status.pack(fill='x',padx=12,pady=(0,6))
+        self.reading_status.pack(fill='x',padx=12,pady=(0,3))
         self.metric=[]
         for col,title in [(1,'Recording minimum'),(2,'Recording maximum')]:
             panel,panel_bg=metric_card(col,title)
             label=tk.Label(panel,text='—',bg=panel_bg,fg=NAVY,
                            font=(UI_FONT,20,'bold'),anchor='w')
-            label.pack(fill='x',padx=12,pady=(3,10))
+            label.pack(fill='x',padx=12,pady=(1,5))
             self.metric.append(label)
         self.live_toolbar=ttk.Frame(main); toolbar=self.live_toolbar
         toolbar.pack(fill='x',pady=(2,4))
@@ -745,7 +745,7 @@ class App(tk.Tk):
                 return f'{seconds//60:02}:{seconds%60:02}'
             return stamp(start+x*60,self.settings['utc_offset'])[5:19].replace('T',' ')
         ax.xaxis.set_major_formatter(FuncFormatter(time_label))
-        ax.tick_params(axis='x',labelrotation=20 if self.viewer_time_display.get()=='Date & time' else 0)
+        ax.tick_params(axis='x',labelrotation=15 if self.viewer_time_display.get()=='Date & time' else 0)
         for label in ax.get_xticklabels():
             label.set_horizontalalignment('right' if self.viewer_time_display.get()=='Date & time' else 'center')
         ax.set(xlabel='Elapsed time (mm:ss)' if self.viewer_time_display.get()=='Elapsed time' else 'Date & time',
@@ -971,7 +971,7 @@ class App(tk.Tk):
             self.lax.xaxis.set_major_locator(MaxNLocator(nbins=5, min_n_ticks=2))
             self.line.set_data([r['ts'] for r in rows],[r['value'] if r['quality']=='OK' else math.nan for r in rows]);self.lax.set_ylabel('Pressure ('+self.settings['unit']+')');self.lax.yaxis.set_major_formatter(FuncFormatter(lambda p,pos:f'{from_psi(p,self.settings["unit"]):,.1f}'))
             self.lax.xaxis.set_major_formatter(FuncFormatter(lambda x,pos:stamp(x,self.settings['utc_offset'])[11:19]))
-            self.lax.tick_params(axis='x',labelrotation=20)
+            self.lax.tick_params(axis='x',labelrotation=15)
             for label in self.lax.get_xticklabels():label.set_horizontalalignment('right')
             if self.follow.get():
                 self.lax.set_autoscaley_on(self.live_auto.get());self.lax.relim();self.lax.autoscale_view(scaley=self.live_auto.get());self.lax.set_xlim(max(rows[0]['ts'],end-seconds),max(end,rows[0]['ts']+1))
