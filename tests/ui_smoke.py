@@ -109,7 +109,28 @@ try:
     a.show('Live Monitor');a.record();pump(.4);assert not a.sid
     assert a.record_btn.cget('text')=='⏺ Start recording'
     assert a.record_btn.cget('style')=='Record.TButton'
-    a.load_viewer(sid);pump(.4);a.history_window.set('1 min');a.slide_history(0);a.history_labels.set(False);a.paint_viewer();a.history_labels.set(True);a.view_vars['ymax'].set('3000');a.apply_view();a.capture_view();pump(.2)
+    a.load_viewer(sid);pump(.4)
+    # Full-width Viewer: summary, read-only metadata and annotations below the chart.
+    assert a.viewer_summary_vars['duration'].get().endswith('s')
+    assert a.viewer_summary_vars['size'].get()=='— (shared DB)'
+    assert 'UI TEST' in a.viewer_details.cget('text')
+    assert a.vcanvas.get_tk_widget().winfo_manager()=='pack'
+    assert a.history_slider.winfo_class()=='TScrollbar'
+    assert a.viewer_toolbar.winfo_manager()=='pack'
+    assert len(a.events_tree.get_children())==1
+    a.viewer_time_display.set('Elapsed time');a.paint_viewer()
+    assert a.vax.get_xlabel()=='Elapsed time (mm:ss)'
+    assert a.vax.xaxis.get_major_formatter()(1.5,0)=='01:30'
+    a.viewer_time_display.set('Date & time');a.paint_viewer()
+    assert a.vax.get_xlabel()=='Date & time'
+    a.viewer_scale_mode.set('Auto');a.select_viewer_scale()
+    a.viewer_scale_mode.set('Manual');a.select_viewer_scale()
+    a.show_viewer_scale_options();pump(.1)
+    assert a.viewer_scale_dialog.winfo_exists()
+    a.viewer_scale_dialog.destroy()
+    a.history_window.set('1 min');a.slide_history(0)
+    a.history_labels.set(False);a.paint_viewer();a.history_labels.set(True)
+    a.view_vars['ymax'].set('3000');a.apply_view();a.capture_view();pump(.2)
     assert a.store.get(sid)['state']=='Completed'
     # Produce actual UI screenshots, using seeded two-minute recording for viewer.
     out=Path(__file__).resolve().parents[1]/'screenshots';out.mkdir(exist_ok=True)
