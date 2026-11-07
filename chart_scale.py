@@ -49,7 +49,8 @@ def apply_engineering_grid(ax, visible=True):
     """Do not overwrite fixed time tick locators installed by callers."""
     if not isinstance(ax.xaxis.get_minor_locator(),(MultipleLocator,AutoMinorLocator)):
         ax.xaxis.set_minor_locator(AutoMinorLocator(5))
-    ax.yaxis.set_minor_locator(AutoMinorLocator(5))
+    if not isinstance(ax.yaxis.get_minor_locator(),MultipleLocator):
+        ax.yaxis.set_minor_locator(AutoMinorLocator(5))
     ax.grid(visible=visible,which='major',color='#8d98a3',alpha=.30,linewidth=.8)
     ax.grid(visible=visible,which='minor',color='#aab4bd',alpha=.16,linewidth=.45)
     ax.set_axisbelow(True)
