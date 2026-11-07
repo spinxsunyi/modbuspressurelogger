@@ -196,8 +196,8 @@ def test_demo_pce_pressure_profile():
     assert HIGH_HOLD_END - STEP_END == 600
 
 
-def test_continuous_50_minute_recording_has_five_ten_minute_samples(tmp_path):
-    """Continuous 0.5 s acquisition for [0,50) min yields buckets 0,10,20,30,40."""
+def test_continuous_50_minute_recording_has_expected_minute_sheets(tmp_path):
+    """Continuous 0.5 s acquisition yields 50 one-minute and 5 ten-minute rows."""
     import xml.etree.ElementTree as ET
     import pytest
     st=Store(tmp_path/'continuous.sqlite')
@@ -212,15 +212,17 @@ def test_continuous_50_minute_recording_has_five_ten_minute_samples(tmp_path):
     export(st,sid,output,{'title':'Continuous 50 minute validation'})
     ns={'m':'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
     with zipfile.ZipFile(output) as archive:
-        root=ET.fromstring(archive.read('xl/worksheets/sheet5.xml'))
-    rows=root.findall('m:sheetData/m:row',ns)
-    assert len(rows)==6  # header + five scheduled data points
-    elapsed_minutes=[]
-    pressures=[]
-    for row in rows[1:]:
-        cells={cell.attrib['r'].rstrip('0123456789'):cell.findtext('m:v',namespaces=ns)
-               for cell in row.findall('m:c',ns)}
-        elapsed_minutes.append(float(cells['C']))
-        pressures.append(float(cells['D']))
-    assert elapsed_minutes==pytest.approx([0,10,20,30,40])
-    assert pressures==pytest.approx([1000,1120,1240,1360,1480])
+        for sheet_number,step,expected_count in ((4,1,50),(5,10,5)):
+            root=ET.fromstring(archive.read(f'xl/worksheets/sheet{sheet_number}.xml'))
+            rows=root.findall('m:sheetData/m:row',ns)
+            assert len(rows)==expected_count+1  # header plus scheduled data
+            elapsed_minutes=[]
+            pressures=[]
+            for row in rows[1:]:
+                cells={cell.attrib['r'].rstrip('0123456789'):cell.findtext('m:v',namespaces=ns)
+                       for cell in row.findall('m:c',ns)}
+                elapsed_minutes.append(float(cells['C']))
+                pressures.append(float(cells['D']))
+            expected_minutes=list(range(0,50,step))
+            assert elapsed_minutes==pytest.approx(expected_minutes)
+            assert pressures==pytest.approx([1000+minute*12 for minute in expected_minutes])
