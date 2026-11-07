@@ -90,7 +90,7 @@ class App(tk.Tk):
         try: self.settings.update(json.loads((DATA/'settings.json').read_text()))
         except (OSError,ValueError): pass
         self.store=Store(DATA/'recordings.sqlite'); self.store.recover(); self.engine=Engine(self.store); self.engine.start()
-        self.sid=None; self.detail_sid=None; self.connected=False; self.latest=None; self.buffer=deque(maxlen=7200); self.viewer_sid=None
+        self.sid=None; self.detail_sid=None; self.connected=False; self.latest=None; self.connection_generation=0; self.connection_pending=False; self.buffer=deque(maxlen=7200); self.viewer_sid=None
         self.save_job=None; self.edit_loading=False; self.closing=False; self._shutdown_complete=False; self._tick_after_id=None; self.shutdown_warning_shown=False; self.last_plot=0; self.rec_count=0; self.rec_errors=0; self.pending=False; self.details_user_visible=True
         self.configure(bg=BG); style=ttk.Style(self); style.theme_use('clam')
         style.configure('.',font=(UI_FONT,10),background=BG,foreground=INK)
@@ -364,7 +364,17 @@ class App(tk.Tk):
         self.edit_loading=False
         self.session_name.config(text=s['name']); self.saved.config(text='Saved')
     def connect(self):
-        self.drop.set(False); self.engine.send('connect',dict(self.settings))
+        self.connection_generation+=1
+        self.connection_pending=True
+        self.connected=False
+        self.latest=None
+        self.buffer.clear()
+        self.value.config(text='—')
+        self.reading_status.config(text='CONNECTING  |  waiting for valid reading',fg=INK)
+        self.connection.config(text='Connecting  |  '+self.settings['mode']+'  |  '+(self.settings['port'] or 'virtual sensor'))
+        self.connect_btn.config(text='Connecting...',state='disabled')
+        self.drop.set(False)
+        self.engine.send('connect',dict(self.settings),self.connection_generation)
     def toggle_connect(self):
         if self.sid:messagebox.showinfo('Recording','Stop recording before disconnecting.');return
         self.engine.send('disconnect') if self.connected else self.connect()
@@ -636,7 +646,7 @@ class App(tk.Tk):
                 # Manual scale inputs reflect the selected display unit.
                 self.live_min.set(f'{from_psi(to_psi(float(self.live_min.get()),old_unit),s["unit"]):.5f}')
                 self.live_max.set(f'{from_psi(to_psi(float(self.live_max.get()),old_unit),s["unit"]):.5f}')
-            self.buffer.clear(); self.latest=None; self.connect(); self.show('Live Monitor')
+            self.connect(); self.show('Live Monitor')
         except Exception as e:messagebox.showerror('Settings',str(e))
     def make_viewer(self):
         p=self.pages['Viewer']
@@ -987,25 +997,37 @@ class App(tk.Tk):
         try:
             while True:
                 kind,d=self.engine.messages.get_nowait()
+                if kind in ('sample','connected','communication_error') and d.get('generation')!=self.connection_generation:
+                    continue
                 if kind=='sample':
                     s=d['sample'];self.latest=s;self.buffer.append(s)
+                    self.connection_pending=False
+                    self.connect_btn.config(state='normal')
                     if s['quality']=='OK':self.value.config(text=f"{from_psi(s['value'],self.settings['unit']):,.2f} {self.settings['unit']}")
                     self.reading_status.config(text=f"{self.settings['mode'].upper()}  |  {s['quality']}  |  {stamp(s['ts'],self.settings['utc_offset'])[11:23]}",fg='#008b92' if s['quality']=='OK' else '#b45309')
                     if d['sid']:self.rec_count+=1;self.rec_errors+=s['quality']!='OK'
-                elif kind=='connected':self.connected=True;self.connection.config(text=d['settings']['mode']+'  |  '+(d['settings']['port'] or 'virtual sensor'));self.connect_btn.config(text='Disconnect')
-                elif kind=='disconnected':self.connected=False;self.connection.config(text='Disconnected');self.connect_btn.config(text='Connect');self.reading_status.config(text='STALE  |  disconnected');self.latest=None
+                elif kind=='connected':
+                    self.connected=True
+                    self.connection.config(text=d['settings']['mode']+'  |  '+(d['settings']['port'] or 'virtual sensor'))
+                    self.connect_btn.config(text='Disconnect',state='normal')
+                    self.reading_status.config(text='WAITING FOR FIRST READING',fg=INK)
+                elif kind=='disconnected':
+                    if self.connection_pending:continue
+                    self.connected=False;self.connection.config(text='Disconnected');self.connect_btn.config(text='Connect',state='normal');self.reading_status.config(text='STALE  |  disconnected',fg='#b45309');self.latest=None
                 elif kind=='started':
                     self.last_recording=d['sid'];self.sid=d['sid'];self.pending=False;self.rec_started=time.monotonic();self.rec_count=0;self.rec_errors=0;self.record_btn.config(text='■ Stop Recording',style='Stop.TButton',state='normal');self.event_btn.config(state='normal');self.load_details(self.sid)
                 elif kind in ('stopped','storage_error'):
                     self.sid=None;self.pending=False;self.record_btn.config(text='⏺ Start recording',style='Record.TButton',state='normal');self.event_btn.config(state='disabled');self.rec_label.config(text='Preview only  |  not saved')
                     if kind=='storage_error':messagebox.showerror('RECORDING STOPPED - storage failure',d['text'])
+                elif kind=='communication_error':
+                    self.footer.config(text='Modbus communication error: '+d['text'][:160])
                 elif kind=='exported':self.exporting=False;self.footer.config(text='Export saved: '+d['path'])
                 elif kind=='export_error':self.exporting=False;messagebox.showerror('Export failed',d['text'])
                 elif kind=='error':self.pending=False;self.record_btn.config(state='normal');messagebox.showerror('PMS Logger',d['text'])
         except queue.Empty:pass
         if self.sid:
             self.rec_label.config(text=f'{self.rec_count:,} samples  |  {self.rec_errors} errors')
-        if self.latest and time.time()-self.latest['ts']>max(2,3*self.settings['interval']):self.reading_status.config(text='STALE  |  waiting for new reading',foreground='#b45309')
+        if self.latest and time.time()-self.latest['ts']>max(2,3*self.settings['interval']):self.reading_status.config(text='STALE  |  waiting for new reading',fg='#b45309')
         if self.page=='Live Monitor' and self.buffer and time.monotonic()-self.last_plot>.5:
             self.last_plot=time.monotonic(); rows=list(self.buffer); end=rows[-1]['ts']; seconds={'1 min':60,'5 min':300,'10 min':600,'15 min':900,'30 min':1800,'1 hour':3600,'Buffer data':1e20}[self.window.get()]
             rows=[r for r in rows if r['ts']>=end-seconds] if self.follow.get() else rows
@@ -1049,6 +1071,15 @@ class App(tk.Tk):
             self.shutdown_warning_shown=True
             self._shutdown_trace('worker still alive after 8s; waiting for safe shutdown')
             self.footer.config(text='Device worker still stopping — see data/shutdown.log')
+        # The worker is daemonized. A blocked Windows serial driver must not
+        # prevent exit when no recording is being finalized. Never force exit
+        # while the worker may still be writing an active recording.
+        if time.monotonic()-self.close_started>10 and not self.sid and not self.pending:
+            self._shutdown_trace('worker unresponsive; closing UI after grace period')
+            self._shutdown_complete=True
+            try:self.instance_lock.close()
+            finally:self.destroy()
+            return
         self.after(60,self._finish_close)
 
     def close(self):
@@ -1273,8 +1304,8 @@ class App(tk.Tk):
             return c.execute("SELECT min(value),max(value) FROM samples WHERE session=? AND quality='OK'",(sid,)).fetchone()
 
     def update_enhancements(self):
-        valid=self.connected and self.latest and self.latest['quality']=='OK' and time.time()-self.latest['ts']<=max(2,3*self.settings['interval'])
-        self.status_live.config(text=('SIMULATION MODE' if self.settings['mode']=='Simulation' else '● LIVE') if valid else 'DISCONNECTED / NO DATA',bg=('#415875' if self.settings['mode']=='Simulation' else '#137a45') if valid else '#b55c00',fg='white',padx=8,pady=4)
+        valid=not self.connection_pending and self.connected and self.latest and self.latest['quality']=='OK' and time.time()-self.latest['ts']<=max(2,3*self.settings['interval'])
+        self.status_live.config(text=('SIMULATION MODE' if self.settings['mode']=='Simulation' else '● LIVE') if valid else ('CONNECTING...' if self.connection_pending else 'DISCONNECTED / NO DATA'),bg=('#415875' if self.settings['mode']=='Simulation' else '#137a45') if valid else '#b55c00',fg='white',padx=8,pady=4)
         self.status_rec.config(text=f'● REC {int(time.monotonic()-self.rec_started)//60:02}:{int(time.monotonic()-self.rec_started)%60:02}' if self.sid else 'REC OFF',bg='#c92c38' if self.sid else '#576677',fg='white',padx=8,pady=4)
         if time.monotonic()-self.enhanced_last<1:return
         self.enhanced_last=time.monotonic()
