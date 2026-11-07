@@ -125,7 +125,11 @@ class App(tk.Tk):
         for page in ['Live Monitor','History','Reporting','Settings','About']:
             button=tk.Button(nav,text=page,command=lambda p=page:self.show(p),bg=NAVY,fg='white',activebackground=TEAL_DARK,activeforeground='white',relief='flat',bd=0,padx=10,pady=2,font=(UI_FONT,9))
             button.pack(side='left'); self.nav_buttons[page]=button
-        self.global_status=tk.Label(nav,text='SIMULATION Mode',bg='#17334c',fg='#ffcb72',padx=15); self.global_status.pack(side='right')
+        # Independent indicators: acquisition mode/health and recording state.
+        self.status_live=tk.Label(nav,text='DISCONNECTED / NO DATA',bg='#b55c00',fg='white',padx=8,pady=4)
+        self.status_live.pack(side='right',padx=12)
+        self.status_rec=tk.Label(nav,text='REC OFF',bg='#576677',fg='white',padx=8,pady=4)
+        self.status_rec.pack(side='right',padx=12)
         # Reserve the bottom strip before the expanding content so it remains visible.
         self.status_bar=tk.Frame(self,bg=NAVY)
         self.status_bar.pack(side='bottom',fill='x')
@@ -1000,9 +1004,7 @@ class App(tk.Tk):
                 elif kind=='error':self.pending=False;self.record_btn.config(state='normal');messagebox.showerror('PMS Logger',d['text'])
         except queue.Empty:pass
         if self.sid:
-            elapsed=int(time.monotonic()-self.rec_started);self.global_status.config(text=f"REC RECORDING {elapsed//60:02}:{elapsed%60:02} | {self.settings['mode'].upper()}")
             self.rec_label.config(text=f'{self.rec_count:,} samples  |  {self.rec_errors} errors')
-        else:self.global_status.config(text=self.settings['mode'].upper()+'  |  PREVIEW')
         if self.latest and time.time()-self.latest['ts']>max(2,3*self.settings['interval']):self.reading_status.config(text='STALE  |  waiting for new reading',foreground='#b45309')
         if self.page=='Live Monitor' and self.buffer and time.monotonic()-self.last_plot>.5:
             self.last_plot=time.monotonic(); rows=list(self.buffer); end=rows[-1]['ts']; seconds={'1 min':60,'5 min':300,'10 min':600,'15 min':900,'30 min':1800,'1 hour':3600,'Buffer data':1e20}[self.window.get()]
@@ -1088,10 +1090,6 @@ class App(tk.Tk):
 
     def enhance(self):
         self.last_recording=None; self.enhanced_last=0; self.live_artists=[]
-        self.global_status.pack_forget()
-        self.status_live=tk.Label(self.global_status.master,text='DISCONNECTED',foreground='#b45309')
-        self.status_live.pack(side='right',padx=12)
-        self.status_rec=tk.Label(self.global_status.master,text='REC OFF',foreground='#777777'); self.status_rec.pack(side='right',padx=12)
         self.bind('<Configure>', self.adapt_width, add='+')
         self.live_min=tk.StringVar(value='0');self.live_max=tk.StringVar(value=f'{from_psi(3000,self.settings["unit"]):.4f}');self.live_auto=tk.BooleanVar(value=True)
         self.live_labels=tk.BooleanVar(value=True)
