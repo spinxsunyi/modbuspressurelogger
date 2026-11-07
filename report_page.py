@@ -86,9 +86,9 @@ def report_figure(store, sid, unit='psi', time_range=None, time_axis='Elapsed Ti
         txt(.06,.671-i*.017,line,8,color=gray)
     if len(wrapped)>3:
         txt(.06,.613,'Notes truncated for first-page layout',7,color=gray)
-    rule(.594)
-    txt(.06,.581,'PRESSURE TREND',10,True)
-    ax=fig.add_axes([.105,.380,.83,.170])
+    rule(.641)
+    txt(.06,.626,'PRESSURE TREND',10,True)
+    ax=fig.add_axes([.105,.355,.83,.240])
     start=session['started']
     xx=[(r['ts']-start)/60 for r in rows]
     yy=[from_psi(r['value'],unit) if r['quality']=='OK' and r['value'] is not None else math.nan for r in rows]
@@ -114,8 +114,8 @@ def report_figure(store, sid, unit='psi', time_range=None, time_axis='Elapsed Ti
     txt(.06,.252,'EVENT LIST',11,True)
     txt(.06,.229,'NO.',8,True,color=gray)
     txt(.125,.229,'TIME',8,True,color=gray)
-    txt(.25,.229,'EVENT',8,True,color=gray)
-    txt(.79,.229,'PRESSURE',8,True,color=gray)
+    txt(.25,.229,'PRESSURE',8,True,color=gray)
+    txt(.46,.229,'EVENT',8,True,color=gray)
     if not events:
         txt(.06,.207,'No event annotations in the selected interval',9,color=gray)
     else:
@@ -129,8 +129,9 @@ def report_figure(store, sid, unit='psi', time_range=None, time_axis='Elapsed Ti
                 y=.207-(i-1)*.024
                 txt(.06,y,f'{i:02d}',9)
                 txt(.125,y,stamp(e['ts'],offset)[11:19],9)
-                txt(.25,y,label,9)
-                txt(.79,y,pressure,9)
+                txt(.25,y,pressure,9)
+                txt(.46,y,label,9)
+                rule(y-.014)
         if len(events)>5:
             txt(.06,.073,f'{len(events)-5} additional events on the following page(s)',8,color=gray)
     rule(.038)
@@ -187,8 +188,8 @@ def report_figures(store, sid, unit='psi', time_range=None, time_axis='Elapsed T
               ('  |  '+details['job'] if details.get('job') else ''),10,True)
         label(.06,.862,'NO.',9,True,color=gray)
         label(.125,.862,'TIME',9,True,color=gray)
-        label(.25,.862,'EVENT',9,True,color=gray)
-        label(.79,.862,'PRESSURE',9,True,color=gray)
+        label(.25,.862,'PRESSURE',9,True,color=gray)
+        label(.46,.862,'EVENT',9,True,color=gray)
         rule(.837)
         for local_index,event in enumerate(remainder[start_index:start_index+25]):
             event_index=start_index+local_index
@@ -199,8 +200,9 @@ def report_figures(store, sid, unit='psi', time_range=None, time_axis='Elapsed T
             name=str(event['label']).replace('\\n',' ')[:60]
             label(.06,y,f'{event_index+6:02d}',9)
             label(.125,y,stamp(event['ts'],offset)[11:19],9)
-            label(.25,y,name,9)
-            label(.79,y,formatted,9)
+            label(.25,y,formatted,9)
+            label(.46,y,name,9)
+            rule(y-.016)
         rule(.038)
         label(.06,.029,'Digital Pressure Recorder v1.0  •  A software by Eka Yudhi Pratama',7,color=gray)
         label(.94,.029,f'Page {page_number} of {total}',7,color=gray,ha='right')
