@@ -563,8 +563,12 @@ class App(tk.Tk):
         d=json.loads(self.vsession['details']); self.viewer_title.config(text=(d.get('well') or 'Unnamed well')+'  |  '+(d.get('job') or 'Recording'))
         self.viewer_details.config(text='\n'.join(f'{label}: {d.get(key) or "—"}' for key,label in
                                                 (('well','Well'),('job','Job'),('job_id','Job ID'),('engineer','Engineer'))))
-        self.viewer_details_right.config(text='\n'.join(f'{label}: {d.get(key) or "—"}' for key,label in
-                                                      (('client','Client'),('job_date','Job date'),('location','Location'),('notes','Notes'))))
+        self.viewer_details_right.config(text='\n'.join((
+            f'Client: {d.get("client") or "—"}',
+            f'Job date: {d.get("job_date") or "—"}',
+            f'Mode: {self.vsession["mode"]}',
+            f'Notes: {d.get("notes") or "—"}'
+        )))
         self.update_viewer_summary()
         end=max(.01,((self.vrows[-1]['ts'] if self.vrows else self.vsession['started']+60)-self.vsession['started'])/60)
         vals=[r['value'] for r in self.vrows if r['value'] is not None]; maximum=max(vals) if vals else 3000
@@ -584,7 +588,7 @@ class App(tk.Tk):
             if self.viewer_time_display.get()=='Elapsed time':
                 seconds=int(round(x*60))
                 return f'{seconds//60:02}:{seconds%60:02}'
-            return stamp(start+x*60,self.settings['utc_offset'])[5:19]
+            return stamp(start+x*60,self.settings['utc_offset'])[5:19].replace('T',' ')
         ax.xaxis.set_major_formatter(FuncFormatter(time_label))
         ax.set(xlabel='Elapsed time (mm:ss)' if self.viewer_time_display.get()=='Elapsed time' else 'Date & time',
                ylabel='Pressure ('+self.vsession['unit']+')',
