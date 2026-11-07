@@ -265,7 +265,10 @@ class App(tk.Tk):
         self.connect_btn=ttk.Button(top,text='Connect',style='Compact.TButton',command=self.toggle_connect); self.connect_btn.pack(side='left',padx=(10,8))
         self.reading_status=tk.Label(top,text='Waiting for first reading',bg=BG,fg=INK,font=(UI_FONT,9),anchor='w')
         self.reading_status.pack(side='left',padx=(0,8))
-        self.drop=tk.BooleanVar(); ttk.Checkbutton(top,text='Simulate disconnect',variable=self.drop,command=lambda:self.engine.send('drop',self.drop.get())).pack(side='right')
+        self.drop=tk.BooleanVar()
+        self.simulate_disconnect_button=ttk.Checkbutton(top,text='Simulate disconnect',variable=self.drop,
+                    command=lambda:self.engine.send('drop',self.drop.get()))
+        self.update_simulate_disconnect_visibility()
         body=ttk.Panedwindow(p,orient='horizontal'); body.pack(fill='both',expand=True,pady=(2,2))
         main=ttk.Frame(body); self.details_panel=ttk.LabelFrame(body,text='Recording details',padding=10); body.add(main,weight=5); body.add(self.details_panel,weight=1); self.live_pane=body
         readings=ttk.Frame(main);readings.pack(fill='x',pady=(0,2))
@@ -1572,6 +1575,13 @@ class App(tk.Tk):
         previous=self.config_vars['port'].get().split(' — ',1)[0]
         self.config_vars['port'].set(next((n for n in names if n.split(' — ',1)[0]==previous),names[0] if names else ''))
         self.port_count.config(text=f'{len(names)} ports detected')
+    def update_simulate_disconnect_visibility(self):
+        if self.settings.get('mode')=='Simulation':
+            self.simulate_disconnect_button.pack(side='right')
+        else:
+            self.simulate_disconnect_button.pack_forget()
+            self.drop.set(False)
+
     def apply_settings(self):
         if self.sid or self.pending:messagebox.showinfo('Recording','Stop recording before changing settings.');return
         try:
@@ -1585,6 +1595,7 @@ class App(tk.Tk):
             s['auto_connect']=self.auto.get(); tmp=DATA/'settings.tmp'; tmp.write_text(json.dumps(s,indent=2)); tmp.replace(DATA/'settings.json')
             old_unit=self.settings['unit']
             self.settings=s
+            self.update_simulate_disconnect_visibility()
             if old_unit!=s['unit']:
                 # Manual scale inputs reflect the selected display unit.
                 self.live_min.set(f'{from_psi(to_psi(float(self.live_min.get()),old_unit),s["unit"]):.5f}')
