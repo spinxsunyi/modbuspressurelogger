@@ -21,7 +21,7 @@ def report_name(session):
     fields=[clean(details.get(key)) for key in ('well','job')]
     fields=[value for value in fields if value]
     if fields:
-        return '_'.join(fields+[date])
+        return '_'.join(['Pressure Recording Report']+fields+[date])
     return 'Digital Pressure Report_'+re.sub(r'[^0-9]','',local[:19])
 
 
