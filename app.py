@@ -918,20 +918,25 @@ class App(tk.Tk):
         width=max(1,viewport.winfo_width())
         height=max(1,viewport.winfo_height())
         viewport.coords(self.reporting_window,width/2,0)
-        if getattr(self,'report_format',None) and self.report_format.get()=='jpg':
-            # JPEG graph preview fits the available viewport in both directions.
-            # Do not resize the export figure: this is a display-only adjustment.
-            canvas=getattr(self,'reporting_figure_canvas',None)
-            if canvas is not None and canvas.get_tk_widget().winfo_exists():
-                fig=canvas.figure
-                dpi=fig.get_dpi()
-                fig.set_size_inches(max(1,(width-48)/dpi),
-                                    max(1,(height-48)/dpi),forward=False)
-                canvas.get_tk_widget().configure(width=max(1,width-48),
-                                                 height=max(1,height-48))
-                canvas.draw_idle()
-        # The PDF uses its natural A4 figure dimensions. Never constrain the
-        # shared canvas window to the JPEG viewport size.
+        if self.report_format.get()!='jpg':
+            return
+        canvas=getattr(self,'reporting_figure_canvas',None)
+        if canvas is None or not canvas.get_tk_widget().winfo_exists():
+            return
+        # Preserve the original 2:1 graph aspect ratio and fit BOTH dimensions.
+        # Stretching the FigureCanvasTkAgg widget independently from its figure
+        # clips the title and axis labels (especially at 150% display scaling).
+        available_w=max(1,width-48)
+        available_h=max(1,height-48)
+        scale=min(available_w/12.0,available_h/6.0)
+        target_w=max(1,int(12*scale))
+        target_h=max(1,int(6*scale))
+        fig=canvas.figure
+        dpi=fig.get_dpi()
+        if abs(fig.get_figwidth()*dpi-target_w)>2 or abs(fig.get_figheight()*dpi-target_h)>2:
+            fig.set_size_inches(target_w/dpi,target_h/dpi,forward=True)
+            canvas.get_tk_widget().configure(width=target_w,height=target_h)
+            canvas.draw_idle()
 
     def draw_report_pan_icon(self):
         c=self.report_pan_button;c.delete('all')
