@@ -571,15 +571,6 @@ class App(tk.Tk):
         self.events_tree.bind('<<TreeviewSelect>>',self.select_history_event)
         self.annotation_time=tk.StringVar(value='0')
 
-    def toggle_viewer_panel(self,name):
-        body,toggle=self.viewer_panels[name]
-        if body.winfo_manager():
-            body.pack_forget()
-            toggle.configure(text='▸ '+name)
-        else:
-            body.pack(fill='x',pady=(4,0))
-            toggle.configure(text='▾ '+name)
-
         chart=ttk.Frame(p);chart.pack(fill='both',expand=True)
         self.vfig,self.vax,self.vcanvas=self.plot(chart)
         self.vcanvas.mpl_connect('button_press_event',self.chart_click)
@@ -592,6 +583,15 @@ class App(tk.Tk):
                         for key,default in [('title',''),('xmin','0'),('xmax','1'),
                                             ('ymin','0'),('ymax','3000')]}
         self.chart_tools(self.vcanvas,chart,False)
+
+    def toggle_viewer_panel(self,name):
+        body,toggle=self.viewer_panels[name]
+        if body.winfo_manager():
+            body.pack_forget()
+            toggle.configure(text='▸ '+name)
+        else:
+            body.pack(fill='x',pady=(4,0))
+            toggle.configure(text='▾ '+name)
 
     def load_viewer(self,sid):
         if not sid:return
