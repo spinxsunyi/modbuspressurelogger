@@ -29,6 +29,19 @@ try:
     a.slide_live(0);assert not a.follow.get();a.follow.set(True)
     a.paint_live_events();assert len(a.live_events.get_children())==1
     a.toggle_details();a.toggle_details();pump(.2)
+    # Compact-window layout must remain operational and restore the metadata panel.
+    a.geometry('850x600');pump(.3)
+    assert a.compact
+    assert str(a.details_panel) not in a.live_pane.panes()
+    a.geometry('1280x820');pump(.3)
+    assert not a.compact
+    assert str(a.details_panel) in a.live_pane.panes()
+    # Notes widget is editable when a recording has loaded.
+    assert str(a.notes.cget('state')) == 'normal'
+    a.notes.insert('end','UI NOTES')
+    a.notes.edit_modified(True);a.notes.event_generate('<<Modified>>')
+    pump(.8)
+    assert 'UI NOTES' in json.loads(a.store.get(sid)['details'])['notes']
     a.engine.send('drop',True);pump(.7);assert a.latest['quality']=='TIMEOUT'
     a.engine.send('drop',False);pump(.7);assert a.latest['quality']=='OK'
     a.show('History');pump(.3);assert a.sid==sid
