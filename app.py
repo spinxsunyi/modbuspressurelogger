@@ -16,6 +16,7 @@ from app_icon import set_window_icon, gauge_image
 from chart_scale import (WINDOWS, apply_window_time_grid, apply_engineering_grid,
                          apply_pressure_grid, reduce_live_samples)
 from PIL import ImageTk
+from sounds import SoundManager
 
 UI_FONT='Segoe UI' if os.name=='nt' else 'Helvetica'
 NAVY = '#17334c'
@@ -94,6 +95,11 @@ class App(tk.Tk):
         self.settings=dict(DEFAULTS)
         try: self.settings.update(json.loads((DATA/'settings.json').read_text()))
         except (OSError,ValueError): pass
+        self.sounds=SoundManager(self.settings.get('sound_enabled',True))
+        self.audio_link_healthy=False
+        self.audio_connected_announced=False
+        self.audio_connection_failure_announced=False
+        self.audio_manual_disconnect=False
         seed(DATA/'recordings.sqlite')  # Only on a clean first launch; never overwrite existing recordings.
         self.store=Store(DATA/'recordings.sqlite'); self.store.recover(); self.engine=Engine(self.store); self.engine.start()
         self.sid=None; self.detail_sid=None; self.connected=False; self.latest=None; self.connection_generation=0; self.connection_pending=False; self.connect_started=0; self.retired_engines=[]; self.simulation_recovery_attempted=False; self.connection_timed_out=False; self.buffer=deque(maxlen=172800); self.viewer_sid=None
@@ -421,6 +427,10 @@ class App(tk.Tk):
         self.edit_loading=False
         self.session_name.config(text=s['name']); self.saved.config(text='Saved')
     def connect(self):
+        self.audio_link_healthy=False
+        self.audio_connected_announced=False
+        self.audio_connection_failure_announced=False
+        self.audio_manual_disconnect=False
         self.connection_generation+=1
         self.connection_pending=True
         self.connect_started=time.monotonic()
@@ -437,7 +447,10 @@ class App(tk.Tk):
         self.engine.send('connect',dict(self.settings),self.connection_generation)
     def toggle_connect(self):
         if self.sid:messagebox.showinfo('Recording','Stop recording before disconnecting.');return
-        self.engine.send('disconnect') if self.connected else self.connect()
+        if self.connected:
+            self.audio_manual_disconnect=True
+            self.engine.send('disconnect')
+        else:self.connect()
     def record(self):
         if self.pending:return
         if not self.sid and (not self.connected or not self.latest or self.latest['quality']!='OK' or time.time()-self.latest['ts']>max(2,3*self.settings['interval'])):
@@ -1499,6 +1512,9 @@ class App(tk.Tk):
         ttk.Label(display,text='Recommended: 0.5 s',foreground='#576677').grid(row=0,column=2,sticky='w',padx=10)
         ttk.Label(display,text='0.5 s means one reading is requested every half-second. Actual sampling may be slower if communication is delayed.',foreground='#576677',wraplength=350,justify='left').grid(row=1,column=2,rowspan=2,sticky='nw',padx=10,pady=(4,0))
 
+        self.sound_enabled=tk.BooleanVar(value=self.settings.get('sound_enabled',True))
+        ttk.Checkbutton(actions,text='Enable operational sounds (mute / unmute)',variable=self.sound_enabled,
+                        command=self.toggle_sounds).pack(anchor='w',pady=(4,12))
         self.auto=tk.BooleanVar(value=self.settings['auto_connect'])
         ttk.Checkbutton(actions,text='Auto-connect last configuration at startup',variable=self.auto).pack(anchor='w',pady=(4,16))
         ttk.Label(actions,text='Hardware profile: PMS-970  |  FC03  |  address 0x0001  |  readout + status',wraplength=360).pack(anchor='w',pady=(0,8))
@@ -1648,6 +1664,17 @@ class App(tk.Tk):
             self.simulate_disconnect_button.pack_forget()
             self.drop.set(False)
 
+    def toggle_sounds(self):
+        enabled=self.sound_enabled.get()
+        self.sounds.set_enabled(enabled)
+        self.settings['sound_enabled']=enabled
+        try:
+            tmp=DATA/'settings.tmp'
+            tmp.write_text(json.dumps(self.settings,indent=2))
+            tmp.replace(DATA/'settings.json')
+        except OSError as exc:
+            self.footer.config(text='Unable to persist sound preference: '+str(exc))
+
     def apply_settings(self):
         if self.sid or self.pending:messagebox.showinfo('Recording','Stop recording before changing settings.');return
         try:
@@ -1659,6 +1686,8 @@ class App(tk.Tk):
             if not 1<=s['address']<=247:raise ValueError('Slave address must be 1-247')
             if s['mode']=='Modbus RTU' and not s['port']:raise ValueError('Specify a COM port')
             s['auto_connect']=self.auto.get()
+            s['sound_enabled']=self.sound_enabled.get()
+            self.sounds.set_enabled(s['sound_enabled'])
             tmp=DATA/'settings.tmp'; tmp.write_text(json.dumps(s,indent=2)); tmp.replace(DATA/'settings.json')
             old_unit=self.settings['unit']
             self.settings=s
@@ -2066,6 +2095,16 @@ class App(tk.Tk):
                     continue
                 if kind=='sample':
                     s=d['sample'];self.latest=s;self.buffer.append(s)
+                    healthy=s['quality']=='OK'
+                    if healthy:
+                        if not self.audio_connected_announced:
+                            self.sounds.play('connected')
+                            self.audio_connected_announced=True
+                        self.audio_link_healthy=True
+                    elif self.audio_link_healthy:
+                        self.audio_link_healthy=False
+                        self.sounds.play('connection_lost')
+                        if self.sid:self.sounds.play('recording_interrupted')
                     if self.live_window_origin is None:self.live_window_origin=s['ts']
                     self.connection_pending=False
                     self.connection_timed_out=False
@@ -2081,13 +2120,22 @@ class App(tk.Tk):
                     self.reading_status.config(text='WAITING FOR FIRST READING',fg=INK)
                 elif kind=='disconnected':
                     if self.connection_pending:continue
+                    if self.audio_manual_disconnect:self.sounds.play('manual_disconnect')
+                    self.audio_manual_disconnect=False
+                    self.audio_link_healthy=False
+                    self.audio_connected_announced=False
                     self.connected=False;self.connection.config(text='Disconnected');self.connect_btn.config(text='Connect',state='normal');self.reading_status.config(text='STALE  |  disconnected',fg='#b45309');self.latest=None
                 elif kind=='started':
+                    self.sounds.play('recording_started')
                     self.last_recording=d['sid'];self.sid=d['sid'];self.pending=False;self.rec_started=time.monotonic();self.rec_count=0;self.rec_errors=0;self.record_btn.config(text='■ Stop Recording',style='Stop.TButton',state='normal');self.event_btn.config(state='normal');self.load_details(self.sid)
                 elif kind in ('stopped','storage_error'):
+                    self.sounds.play('recording_stopped' if kind=='stopped' else 'storage_error')
                     self.sid=None;self.pending=False;self.record_btn.config(text='⏺ Start recording',style='Record.TButton',state='normal');self.event_btn.config(state='disabled');self.rec_label.config(text='Preview only  |  not saved')
                     if kind=='storage_error':messagebox.showerror('RECORDING STOPPED - storage failure',d['text'])
                 elif kind=='communication_error':
+                    if not self.audio_connected_announced and not self.audio_connection_failure_announced:
+                        self.sounds.play('connection_failed')
+                        self.audio_connection_failure_announced=True
                     self.footer.config(text='Modbus communication error: '+d['text'][:160])
                 elif kind=='exported':
                     self.exporting=False
@@ -2097,6 +2145,8 @@ class App(tk.Tk):
                 elif kind=='error':
                     self.pending=False;self.record_btn.config(state='normal')
                     if self.connection_pending:
+                        if not self.audio_connection_failure_announced:self.sounds.play('connection_failed')
+                        self.audio_connection_failure_announced=True
                         self.connection_pending=False;self.connected=False
                         self.connect_btn.config(text='Connect',state='normal')
                         self.connection.config(text='Connection failed')
@@ -2136,6 +2186,8 @@ class App(tk.Tk):
             return
         if self.latest and self.latest['quality']=='OK' and time.time()-self.latest['ts']<=max(2,3*self.settings['interval']):
             return
+        if not self.audio_connection_failure_announced:self.sounds.play('connection_failed')
+        self.audio_connection_failure_announced=True
         self.connection_timed_out=True
         self.connection_pending=False
         self.reading_status.config(text='CONNECTION TIMEOUT  |  NO DATA',fg='#b45309')
