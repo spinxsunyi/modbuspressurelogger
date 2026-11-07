@@ -63,7 +63,65 @@ def test_chart_scale_does_not_change_selected_samples(tmp_path):
     ('15 min',180,30), ('30 min',300,60), ('1 hour',600,120),
     ('12 hours',3600,900), ('24 hours',7200,1800),
 ])
-def test_live_and_history_time_grid_configuration(window,major,minor):
-    # Source check catches accidental divergence between the two UI chart maps.
-    source = (Path(__file__).resolve().parents[1] / 'app.py').read_text(encoding='utf-8')
-    assert f"'{window}':({major},{minor})" in source
+def test_live_and_history_tick_positions(window,major,minor):
+    from chart_scale import apply_window_time_grid, apply_engineering_grid
+    for units, factor in [('seconds',1),('minutes',1/60)]:
+        ax=Figure().add_subplot(111)
+        assert apply_window_time_grid(ax,window,units=units)
+        apply_engineering_grid(ax)
+        assert isinstance(ax.xaxis.get_major_locator(),MultipleLocator)
+        assert isinstance(ax.xaxis.get_minor_locator(),MultipleLocator)
+        assert any(math.isclose(x,major*factor,abs_tol=1e-6)
+                   for x in ax.xaxis.get_majorticklocs())
+        assert any(math.isclose(x,minor*factor,abs_tol=1e-6)
+                   for x in ax.xaxis.get_minorticklocs())
+
+
+def test_pressure_ticks_keep_manual_bounds():
+    from chart_scale import apply_pressure_grid, apply_engineering_grid
+    ax=Figure().add_subplot(111)
+    ax.set_ylim(0,5000)
+    step=apply_pressure_grid(ax,0,5000)
+    apply_engineering_grid(ax)
+    assert step==1000
+    assert ax.get_ylim()==pytest.approx((0,5000))
+    assert any(math.isclose(x,200) for x in ax.yaxis.get_minorticklocs())
+
+
+def test_reduction_preserves_extrema_and_communication_gap():
+    from chart_scale import reduce_live_samples
+    rows=[dict(ts=float(i),value=1000.,quality='OK') for i in range(12000)]
+    rows[124]['value']=5000.
+    rows[7000]['value']=0.
+    rows[7100]['value']=None
+    rows[7100]['quality']='TIMEOUT'
+    result=reduce_live_samples(rows,4000)
+    assert len(result)<len(rows)
+    assert any(r['value']==5000 for r in result)
+    assert any(r['value']==0 for r in result)
+    assert any(r['quality']=='TIMEOUT' for r in result)
+    assert len(rows)==12000
+    assert rows[124]['value']==5000
+
+
+def test_export_charts_use_same_axis_policy(tmp_path):
+    from report_page import report_figures,graph_figure
+    st=Store(tmp_path/'report.sqlite')
+    sid=st.start(DEFAULTS,1000)
+    for i in range(97):
+        st.add_sample(sid,dict(ts=1000+i*30,elapsed=i*30,value=5000 if i==42 else 1000,
+                               quality='OK',raw=None,status=None,latency=0))
+    st.finish(sid)
+    interval=(1000,1000+48*60)
+    pages=report_figures(st,sid,time_range=interval)
+    jpg=graph_figure(st,sid,time_range=interval)
+    charts=[next(ax for ax in page.axes if ax.get_ylabel().startswith('Pressure'))
+            for page in pages if any(ax.get_ylabel().startswith('Pressure') for ax in page.axes)]
+    charts.append(jpg.axes[0])
+    for ax in charts:
+        assert ax.get_xlim()==pytest.approx((0,50))
+        assert isinstance(ax.xaxis.get_major_locator(),MultipleLocator)
+        assert isinstance(ax.xaxis.get_minor_locator(),MultipleLocator)
+        assert any(math.isclose(x,10) for x in ax.xaxis.get_majorticklocs())
+        assert any(math.isclose(x,2) for x in ax.xaxis.get_minorticklocs())
+    assert len(st.plot_rows(sid))==97
