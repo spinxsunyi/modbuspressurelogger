@@ -125,7 +125,7 @@ class App(tk.Tk):
         for page in ['Live Monitor','History','Reporting','Settings','About']:
             button=tk.Button(nav,text=page,command=lambda p=page:self.show(p),bg=NAVY,fg='white',activebackground=TEAL_DARK,activeforeground='white',relief='flat',bd=0,padx=10,pady=2,font=(UI_FONT,9))
             button.pack(side='left'); self.nav_buttons[page]=button
-        self.global_status=tk.Label(nav,text='SIMULATION',bg='#17334c',fg='#ffcb72',padx=15); self.global_status.pack(side='right')
+        self.global_status=tk.Label(nav,text='SIMULATION Mode',bg='#17334c',fg='#ffcb72',padx=15); self.global_status.pack(side='right')
         # Reserve the bottom strip before the expanding content so it remains visible.
         self.status_bar=tk.Frame(self,bg=NAVY)
         self.status_bar.pack(side='bottom',fill='x')
@@ -239,7 +239,7 @@ class App(tk.Tk):
         self.reading_status.pack(side='left',padx=(0,8))
         self.drop=tk.BooleanVar(); ttk.Checkbutton(top,text='Simulate disconnect',variable=self.drop,command=lambda:self.engine.send('drop',self.drop.get())).pack(side='right')
         body=ttk.Panedwindow(p,orient='horizontal'); body.pack(fill='both',expand=True,pady=(2,2))
-        main=ttk.Frame(body); self.details_panel=ttk.LabelFrame(body,text='Recording details  |  autosaved',padding=10); body.add(main,weight=5); body.add(self.details_panel,weight=1); self.live_pane=body
+        main=ttk.Frame(body); self.details_panel=ttk.LabelFrame(body,text='Recording details',padding=10); body.add(main,weight=5); body.add(self.details_panel,weight=1); self.live_pane=body
         readings=ttk.Frame(main);readings.pack(fill='x',pady=(0,2))
         for col in range(3):readings.columnconfigure(col,weight=1,uniform='metric')
         def metric_card(column,title,highlight=False):
@@ -283,7 +283,7 @@ class App(tk.Tk):
         self.event_btn=ttk.Button(controls,text='+ Add Event',style='Compact.TButton',command=self.add_live_event,state='disabled'); self.event_btn.pack(side='left',padx=10)
         self.rec_label=ttk.Label(controls,text='Preview only  |  not saved'); self.rec_label.pack(side='left')
         self.detail_vars={}; self.detail_entries=[]
-        self.session_name=ttk.Label(self.details_panel,text='Press Record to create a session',wraplength=250); self.session_name.pack(anchor='w',pady=(0,8))
+        self.session_name=ttk.Label(self.details_panel,text='Press "Start Recording" to create a session',wraplength=250); self.session_name.pack(anchor='w',pady=(0,8))
         form=ttk.Frame(self.details_panel);form.pack(fill='x')
         form.columnconfigure(1,weight=1)
         for index,k in enumerate(FIELDS):
@@ -1276,7 +1276,7 @@ class App(tk.Tk):
 
     def update_enhancements(self):
         valid=self.connected and self.latest and self.latest['quality']=='OK' and time.time()-self.latest['ts']<=max(2,3*self.settings['interval'])
-        self.status_live.config(text=('SIMULATION' if self.settings['mode']=='Simulation' else '● LIVE') if valid else 'DISCONNECTED / NO DATA',bg=('#415875' if self.settings['mode']=='Simulation' else '#137a45') if valid else '#b55c00',fg='white',padx=8,pady=4)
+        self.status_live.config(text=('SIMULATION MODE' if self.settings['mode']=='Simulation' else '● LIVE') if valid else 'DISCONNECTED / NO DATA',bg=('#415875' if self.settings['mode']=='Simulation' else '#137a45') if valid else '#b55c00',fg='white',padx=8,pady=4)
         self.status_rec.config(text=f'● REC {int(time.monotonic()-self.rec_started)//60:02}:{int(time.monotonic()-self.rec_started)%60:02}' if self.sid else 'REC OFF',bg='#c92c38' if self.sid else '#576677',fg='white',padx=8,pady=4)
         if time.monotonic()-self.enhanced_last<1:return
         self.enhanced_last=time.monotonic()
