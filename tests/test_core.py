@@ -125,3 +125,33 @@ def test_legacy_unit_metadata_migration_preserves_values(tmp_path):
     reopened=Store(db)
     assert reopened.get(sid)['unit']=='psi'
     assert reopened.plot_rows(sid)[0]['value']==5000.0
+
+
+def test_demo_seed_first_launch_only(tmp_path):
+    from seed_demo import seed
+    import json
+    db = tmp_path / 'data' / 'recordings.sqlite'
+    seed(db)
+    store = Store(db)
+    sessions = store.sessions()
+    assert len(sessions) == 2
+    assert all(s['state'] == 'Completed' and s['mode'] == 'Simulation' for s in sessions)
+    for session in sessions:
+        details = json.loads(session['details'])
+        assert details['job_id'].startswith('DEMO-')
+        assert 'Synthetic' in details['notes']
+        assert store.stats(session['id'])['n'] == 241
+        assert len(store.events(session['id'])) == 4
+    original_ids = {s['id'] for s in sessions}
+    seed(db)
+    assert {s['id'] for s in Store(db).sessions()} == original_ids
+
+
+def test_demo_seed_preserves_existing_real_database(tmp_path):
+    from seed_demo import seed
+    db = tmp_path / 'recordings.sqlite'
+    store = Store(db)
+    sid = store.start(DEFAULTS, 1000)
+    store.finish(sid)
+    seed(db)
+    assert [s['id'] for s in Store(db).sessions()] == [sid]
