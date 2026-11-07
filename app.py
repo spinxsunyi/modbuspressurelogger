@@ -754,6 +754,16 @@ class App(tk.Tk):
                           ('Excel — Detailed Data','xlsx'),('CSV — Detailed Data','csv')]:
             ttk.Radiobutton(actions,text=label,value=fmt,variable=self.report_format,
                             command=self.refresh_reporting).pack(side='left',padx=(0,12))
+        resolution_row=ttk.Frame(three)
+        resolution_row.pack(fill='x',pady=(0,8))
+        self.report_resolution=tk.StringVar(value='all')
+        ttk.Label(resolution_row,text='Data resolution (Excel / CSV):').pack(side='left',padx=(0,9))
+        self.report_resolution_picker=ttk.Combobox(resolution_row,textvariable=self.report_resolution,
+            values=['all','0.5 s','1 s','1 min'],state='readonly',width=12)
+        self.report_resolution_picker.pack(side='left')
+        ttk.Label(resolution_row,text='Summaries include average, minimum, maximum and sample count.',
+                  foreground='#576677').pack(side='left',padx=(12,0))
+        self.report_resolution_row=resolution_row
         ttk.Button(actions,text='Export Selected',style='Accent.TButton',
                    command=lambda:self.export_reporting(self.report_format.get())).pack(side='right')
         ttk.Button(actions,text='Edit Metadata & Notes',style='Compact.TButton',
@@ -1335,6 +1345,7 @@ class App(tk.Tk):
             self.exporting=False
             messagebox.showerror('Graph scale',str(exc),parent=self);return
         show_events=self.report_events.get();show_grid=self.report_grid.get()
+        resolution={'all':None,'0.5 s':0.5,'1 s':1.0,'1 min':60.0}[self.report_resolution.get()]
         def work():
             try:
                 if fmt in ('pdf','jpg'):
@@ -1356,7 +1367,7 @@ class App(tk.Tk):
                         temp.replace(target)
                     finally:temp.unlink(missing_ok=True)
                 else:
-                    export(self.store,sid,path,{'xmin':(time_range[0]-session['started'])/60,'xmax':(time_range[1]-session['started'])/60},True)
+                    export(self.store,sid,path,{'xmin':(time_range[0]-session['started'])/60,'xmax':(time_range[1]-session['started'])/60},True,resolution=resolution)
                 self.engine.emit('exported',path=path)
             except Exception as exc:
                 self.engine.emit('export_error',text='Export failed: '+str(exc))
