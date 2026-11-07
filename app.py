@@ -118,6 +118,14 @@ class App(tk.Tk):
         style.map('Report.TCombobox',fieldbackground=[('readonly','white')],
                   foreground=[('readonly',INK)],selectbackground=[('readonly','white')],
                   selectforeground=[('readonly',INK)])
+        # Settings: visually distinguish the frequently adjusted inputs.
+        style.configure('SettingsWhite.TCombobox',fieldbackground='#ffffff',background='#ffffff',foreground=INK)
+        style.map('SettingsWhite.TCombobox',fieldbackground=[('readonly','#ffffff')],
+                  foreground=[('readonly',INK)],selectbackground=[('readonly','#ffffff')],selectforeground=[('readonly',INK)])
+        style.configure('SettingsGrey.TCombobox',fieldbackground='#dedede',background='#dedede',foreground=INK)
+        style.map('SettingsGrey.TCombobox',fieldbackground=[('readonly','#dedede')],
+                  foreground=[('readonly',INK)],selectbackground=[('readonly','#dedede')],selectforeground=[('readonly',INK)])
+        style.configure('SettingsGrey.TEntry',fieldbackground='#dedede',foreground=INK)
         style.configure('Live.TCombobox',fieldbackground='white',background='white',foreground=INK,selectbackground='white',selectforeground=INK)
         style.map('Live.TCombobox',fieldbackground=[('readonly','white')],foreground=[('readonly',INK)],selectbackground=[('readonly','white')],selectforeground=[('readonly',INK)])
         style.configure('Danger.TButton',background='#c62828',foreground='white',padding=(10,6),font=(UI_FONT,9,'bold'))
@@ -1444,6 +1452,10 @@ class App(tk.Tk):
                 en=ttk.Combobox(parent,textvariable=v,state='readonly',width=30); self.port_combo=en
             elif k in choices:en=ttk.Combobox(parent,textvariable=v,values=choices[k],state='readonly',width=30)
             else:en=ttk.Entry(parent,textvariable=v,width=32)
+            if isinstance(en,ttk.Combobox):
+                en.configure(style='SettingsWhite.TCombobox' if k in ('mode','port','baud','interval','unit','utc_offset') else 'SettingsGrey.TCombobox')
+            elif k=='address':
+                en.configure(style='SettingsGrey.TEntry')
             en.grid(row=row,column=1,sticky='ew',pady=4)
         port_actions=ttk.Frame(grid)
         port_actions.grid(row=1,column=2,sticky='w',padx=10)
