@@ -159,3 +159,15 @@ def test_reduction_keeps_consecutive_invalid_samples():
     reduced=reduce_live_samples(rows)
     assert [r['ts'] for r in reduced if r['quality']=='TIMEOUT']==[float(i) for i in range(4000,4040)]
     assert len(rows)==12000
+
+
+@pytest.mark.parametrize("unit",['psi','bar','kPa','MPa'])
+def test_pressure_grid_respects_display_units(unit):
+    from chart_scale import apply_pressure_grid,nice_pressure_step
+    from units import from_psi
+    ax=Figure().add_subplot(111)
+    ax.set_ylim(0,5000)
+    raw_step=apply_pressure_grid(ax,0,5000,unit=unit,raw_psi=True)
+    display_step=from_psi(raw_step,unit)
+    assert display_step==pytest.approx(nice_pressure_step(from_psi(5000,unit)))
+    assert ax.get_ylim()==pytest.approx((0,5000))
