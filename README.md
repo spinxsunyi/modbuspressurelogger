@@ -28,6 +28,9 @@ Configure serial port, baud rate, Modbus parameters, sampling interval, display 
 ### Simulation Mode
 Test the monitoring and recording workflow without connecting physical hardware.
 
+### First-launch demo recordings
+A clean installation automatically creates two completed **synthetic** pressure-test recordings (DEMO-001 and DEMO-002) in History. They include pressure trends, event annotations, and an example communication timeout, and are marked as simulation data—not real measurements. Seeding happens once only, when the recordings database does not exist. Existing databases are never replaced or seeded, and no personal/local database is included in the portable ZIP. Demo recordings can be removed individually from History when no longer needed.
+
 ## Supported devices
 
 - **Aplisens PMS-970** — Modbus RTU
