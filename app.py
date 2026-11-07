@@ -138,8 +138,8 @@ class App(tk.Tk):
         self.credit=tk.Label(self.status_bar,text='Created by Eka Yudhi Pratama  •  November 2026',bg=NAVY,fg='white',anchor='e',padx=10,pady=4)
         self.credit.pack(side='right')
         self.host=ttk.Frame(self,padding=14); self.host.pack(fill='both',expand=True)
-        self.pages={name:ttk.Frame(self.host) for name in ['Live Monitor','History','Reporting','Settings','Viewer']}
-        self.make_live(); self.make_history(); self.make_reporting(); self.make_settings(); self.make_viewer(); self.enhance(); self.show('Live Monitor')
+        self.pages={name:ttk.Frame(self.host) for name in ['Live Monitor','History','Reporting','Settings','About','Viewer']}
+        self.make_live(); self.make_history(); self.make_reporting(); self.make_settings(); self.make_about(); self.make_viewer(); self.enhance(); self.show('Live Monitor')
         # Route mouse-wheel scrolling only to the Settings page or Viewer sidebar.
         self.bind_all('<MouseWheel>',self.scroll_page,add='+')
         self.bind_all('<Button-4>',self.scroll_page,add='+')
@@ -149,8 +149,6 @@ class App(tk.Tk):
         self._tick_after_id=self.after(50,self.tick)
         if self.settings.get('auto_connect') and (self.settings['mode']=='Simulation' or self.settings['port']): self.after(200,self.connect)
     def show(self,name):
-        if name=='About':
-            self.show('Settings'); return
         for p in self.pages.values(): p.pack_forget()
         self.pages[name].pack(fill='both',expand=True); self.page=name
         for key,button in self.nav_buttons.items(): button.config(bg=TEAL if key==('History' if name=='Viewer' else name) else NAVY)
@@ -598,17 +596,10 @@ class App(tk.Tk):
         grid.grid(row=0,column=0,sticky='nsew',padx=(0,8),pady=(0,10))
         display=ttk.LabelFrame(columns,text='Acquisition & display',padding=14)
         display.grid(row=1,column=0,sticky='nsew',padx=(0,8))
-        about=ttk.LabelFrame(columns,text='About',padding=18)
-        about.grid(row=0,column=1,rowspan=2,sticky='nsew',padx=(8,0))
-        self.settings_device=grid;self.settings_display=display;self.settings_about=about
+        actions=ttk.LabelFrame(columns,text='Connection preferences & actions',padding=14)
+        actions.grid(row=0,column=1,rowspan=2,sticky='nsew',padx=(8,0),pady=(0,10))
+        self.settings_device=grid;self.settings_display=display;self.settings_actions=actions
         grid.columnconfigure(1,weight=1);display.columnconfigure(1,weight=1)
-        ttk.Label(about,text='Digital Pressure Recorder',font=(UI_FONT,16,'bold')).pack(anchor='w')
-        ttk.Label(about,text='Aplisens PMS-970 / Modbus RTU').pack(anchor='w',pady=8)
-        ttk.Label(about,text='Created by Eka Yudhi Pratama\nNovember 2026').pack(anchor='w')
-        ttk.Separator(about).pack(fill='x',pady=(14,10))
-        ttk.Label(about,text='Status key',font=(UI_FONT,11,'bold')).pack(anchor='w',pady=(0,6))
-        for label,color in [('LIVE','#137a45'),('DISCONNECTED','#b55c00'),('RECORDING','#c92c38'),('REC OFF','#576677')]:
-            tk.Label(about,text='●  '+label,bg=BG,fg=color,font=(UI_FONT,10)).pack(anchor='w',pady=3)
         self.config_vars={}
         choices={'mode':['Simulation','Modbus RTU'],'baud':[2400,4800,9600,19200],'parity':['E','N','O'],'stopbits':[1,2],'interval':[.5,1,.2,.1],'unit':['psi','bar','kPa','MPa'],'utc_offset':[7,8,0]}
         for n,k in enumerate(['mode','port','baud','parity','stopbits','address','interval','unit','utc_offset']):
@@ -623,9 +614,27 @@ class App(tk.Tk):
             en.grid(row=row,column=1,sticky='ew',pady=4)
         ttk.Button(grid,text='Refresh ports',command=self.find_ports).grid(row=1,column=2,padx=10)
         self.port_count=ttk.Label(grid);self.port_count.grid(row=2,column=2)
-        self.auto=tk.BooleanVar(value=self.settings['auto_connect']); ttk.Checkbutton(p,text='Auto-connect last configuration at startup',variable=self.auto).pack(anchor='w',pady=8)
-        ttk.Label(p,text='Hardware profile: PMS-970  |  FC03  |  address 0x0001  |  readout + status\nSensor/storage unit: PSI. Display units are converted for viewing; stored samples remain PSI.\nDevice communication confirmed by user at 9600 baud, November 2026.\n\nData: '+str(DATA),wraplength=900).pack(anchor='w',pady=12)
-        ttk.Button(p,text='Save and reconnect',command=self.apply_settings,style='Accent.TButton').pack(anchor='w')
+        self.auto=tk.BooleanVar(value=self.settings['auto_connect'])
+        ttk.Checkbutton(actions,text='Auto-connect last configuration at startup',variable=self.auto).pack(anchor='w',pady=(4,16))
+        ttk.Label(actions,text='Hardware profile: PMS-970  |  FC03  |  address 0x0001  |  readout + status',wraplength=360).pack(anchor='w',pady=(0,8))
+        ttk.Label(actions,text='Sensor/storage unit: PSI. Display units are converted for viewing; stored samples remain PSI.',wraplength=360).pack(anchor='w',pady=(0,8))
+        ttk.Label(actions,text='Device communication confirmed by user at 9600 baud, November 2026.',wraplength=360).pack(anchor='w',pady=(0,12))
+        ttk.Label(actions,text='Data directory:',font=(UI_FONT,9,'bold')).pack(anchor='w')
+        ttk.Label(actions,text=str(DATA),wraplength=360).pack(anchor='w',pady=(2,18))
+        ttk.Button(actions,text='Save and reconnect',command=self.apply_settings,style='Accent.TButton').pack(anchor='w')
+    def make_about(self):
+        p=self.pages['About']
+        ttk.Label(p,text='About Digital Pressure Recorder',style='Title.TLabel').pack(anchor='w',pady=(8,16))
+        about=ttk.LabelFrame(p,text='Application information',padding=20)
+        about.pack(fill='x',padx=4,pady=(0,12))
+        ttk.Label(about,text='Digital Pressure Recorder 0.2',font=(UI_FONT,16,'bold')).pack(anchor='w')
+        ttk.Label(about,text='Aplisens PMS-970 / Modbus RTU').pack(anchor='w',pady=8)
+        ttk.Label(about,text='Created by Eka Yudhi Pratama\nNovember 2026').pack(anchor='w')
+        ttk.Separator(about).pack(fill='x',pady=(14,10))
+        ttk.Label(about,text='Status key',font=(UI_FONT,11,'bold')).pack(anchor='w',pady=(0,6))
+        for label,color in [('LIVE','#137a45'),('DISCONNECTED','#b55c00'),('RECORDING','#c92c38'),('REC OFF','#576677')]:
+            tk.Label(about,text='●  '+label,bg=BG,fg=color,font=(UI_FONT,10)).pack(anchor='w',pady=3)
+
     def find_ports(self):
         from serial.tools.list_ports import comports
         ports=list(comports()); names=[p.device+' — '+p.description for p in ports]
