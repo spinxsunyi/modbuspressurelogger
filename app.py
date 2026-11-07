@@ -112,8 +112,12 @@ class App(tk.Tk):
         style.map('Compact.TButton',background=[('pressed','#cddde7'),('active','#dce8ef')])
         style.map('TButton',background=[('pressed','#cddde7'),('active','#dce8ef')])
         style.configure('Accent.TButton',background=TEAL,foreground='white',padding=(14,9),font=(UI_FONT,10,'bold'))
-        style.map('Accent.TButton',background=[('pressed',TEAL_DARK),('active',TEAL_DARK)],
-                  foreground=[('disabled','#6d818b'),('!disabled','white')])
+        # Disabled primary actions must lose their accent fill, not only dim the text.
+        # State order matters: disabled is evaluated before active/pressed.
+        style.map('Accent.TButton',
+                  background=[('disabled','#d9e0e5'),('pressed',TEAL_DARK),
+                              ('active',TEAL_DARK),('!disabled',TEAL)],
+                  foreground=[('disabled','#52616c'),('!disabled','white')])
         style.configure('Report.TButton',background='#21834b',foreground='white',padding=(15,9),font=(UI_FONT,11,'bold'))
         style.map('Report.TButton',background=[('pressed','#176538'),('active','#176538')],foreground=[('!disabled','white')])
         style.configure('Record.TButton',background='#d52e36',foreground='white',padding=(14,9),font=(UI_FONT,10,'bold'))
