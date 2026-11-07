@@ -579,7 +579,7 @@ class App(tk.Tk):
         self.report_view_xmin=tk.StringVar(value='0')
         self.report_view_xmax=tk.StringVar(value='0')
         self.report_ymin=tk.StringVar(value='')
-        self.report_ymax=tk.StringVar('')
+        self.report_ymax=tk.StringVar(value='')
 
         controls=ttk.Frame(section);controls.pack(fill='x',pady=(0,8))
         modes=ttk.Frame(controls);modes.pack(side='left',anchor='w')
@@ -761,8 +761,6 @@ class App(tk.Tk):
         if not session:return
         if self.report_range_sid!=sid:self.reset_report_range()
         if self.report_inline_sid==sid:return
-        self.report_view_xmin.set('0')
-        self.report_view_xmax.set(f'{max(((session["ended"] or self.store.stats(sid)["last"] or session["started"])-session["started"])/60,.001):.3f}')
         self.report_ymin.set('');self.report_ymax.set('')
         from matplotlib.widgets import SpanSelector
         from matplotlib.ticker import MaxNLocator
@@ -775,14 +773,17 @@ class App(tk.Tk):
         fig=Figure(figsize=(10,4),dpi=100,facecolor='white')
         ax=fig.add_subplot(111)
         fig.subplots_adjust(left=.07,right=.98,top=.95,bottom=.17)
-        ax.plot([(r['ts']-start)/60 for r in rows],
-                [from_psi(r['value'],self.settings['unit']) if r['quality']=='OK' and r['value'] is not None else math.nan for r in rows],
-                color=TEAL,lw=1.2)
+        self.report_graph_rows=rows
+        self.report_graph_start=start
+        self.report_graph_offset=json.loads(session['settings']).get('utc_offset',8)
+        self.report_graph_line,=ax.plot([],[],color=TEAL,lw=1.2)
         ax.set_xlim(0,duration)
-        ax.set_ylabel('Pressure ('+self.settings['unit']+')')
+        ax.set_ylabel('Pressure ('+self.report_unit.get()+')')
         ax.set_xlabel('Elapsed time (minutes)')
         ax.xaxis.set_major_locator(MaxNLocator(9))
         ax.grid(alpha=.2)
+        self.report_graph_events=store_events=self.store.events(sid)
+        self.report_graph_event_artists=[]
         canvas=FigureCanvasTkAgg(fig,master=self.report_range_chart)
         canvas.get_tk_widget().pack(fill='both',expand=True)
         self.report_range_shade=ax.axvspan(0,duration,color='#44b99f',alpha=.28)
@@ -823,19 +824,77 @@ class App(tk.Tk):
             span=max(.01,min(duration,(hi-lo)*factor))
             center=max(span/2,min(duration-span/2,event.xdata))
             ax.set_xlim(center-span/2,center+span/2)
-            self.report_view_xmin.set(f'{ax.get_xlim()[0]:.3f}')
-            self.report_view_xmax.set(f'{ax.get_xlim()[1]:.3f}')
+            self.set_report_x_view_fields(*ax.get_xlim())
             canvas.draw_idle()
         canvas.mpl_connect('scroll_event',wheel)
         self.report_range_canvas=canvas
         self.report_inline_sid=sid
+        self.set_report_x_view_fields(0,duration)
+        self.update_report_graph_options()
         self.change_report_range_mode()
         canvas.draw()
+
+    def format_report_x_view(self,minutes):
+        if self.report_axis.get()!='Date & Time':return f'{minutes:.3f}'
+        from datetime import datetime
+        return datetime.fromisoformat(stamp(self.report_graph_start+minutes*60,
+                    self.report_graph_offset)).strftime('%Y-%m-%d %H:%M:%S')
+
+    def parse_report_x_view(self,value):
+        if self.report_axis.get()!='Date & Time':return float(value)
+        from datetime import datetime,timezone,timedelta
+        dt=datetime.strptime(value.strip(),'%Y-%m-%d %H:%M:%S')
+        dt=dt.replace(tzinfo=timezone(timedelta(hours=float(self.report_graph_offset))))
+        return (dt.timestamp()-self.report_graph_start)/60
+
+    def set_report_x_view_fields(self,lo,hi):
+        self.report_view_xmin.set(self.format_report_x_view(lo))
+        self.report_view_xmax.set(self.format_report_x_view(hi))
+
+    def update_report_graph_options(self):
+        """Update the Step 2 chart in place; never change selected timestamps."""
+        if not getattr(self,'report_range_canvas',None) or self.report_inline_sid!=getattr(self,'reporting_sid',None):
+            return
+        from matplotlib.ticker import FuncFormatter,MaxNLocator
+        ax=self.report_range_axes
+        prior_xlim=ax.get_xlim()
+        unit=self.report_unit.get()
+        values=[from_psi(r['value'],unit) if r['quality']=='OK' and r['value'] is not None else math.nan
+                for r in self.report_graph_rows]
+        xs=[(r['ts']-self.report_graph_start)/60 for r in self.report_graph_rows]
+        self.report_graph_line.set_data(xs,values)
+        ax.set_ylabel(f'Pressure ({unit})')
+        for artist in self.report_graph_event_artists:artist.remove()
+        self.report_graph_event_artists=[]
+        if self.report_events.get():
+            for event in self.report_graph_events:
+                x=(event['ts']-self.report_graph_start)/60
+                self.report_graph_event_artists.append(ax.axvline(x,color='#bb852c',ls='--',lw=.8,alpha=.8))
+        if self.report_axis.get()=='Date & Time':
+            self.report_xfrom_label.configure(text='View X from (date/time)')
+            ax.xaxis.set_major_formatter(FuncFormatter(
+                lambda x,pos:stamp(self.report_graph_start+x*60,self.report_graph_offset)[11:19]))
+            ax.set_xlabel('Date & time (UTC%+g)' % float(self.report_graph_offset))
+        else:
+            self.report_xfrom_label.configure(text='View X from (min)')
+            ax.xaxis.set_major_formatter(FuncFormatter(lambda x,pos:f'{x:g}'))
+            ax.set_xlabel('Elapsed time (minutes)')
+        ax.xaxis.set_major_locator(MaxNLocator(8))
+        ax.grid(visible=self.report_grid.get(),alpha=.2)
+        ax.relim()
+        if not self.report_ymin.get().strip() and not self.report_ymax.get().strip():
+            ax.autoscale(axis='y')
+        else:
+            try:ax.set_ylim(*self.get_report_y_limits())
+            except ValueError:pass
+        ax.set_xlim(*prior_xlim)
+        self.set_report_x_view_fields(*prior_xlim)
+        self.report_range_canvas.draw_idle()
 
     def apply_report_scale(self):
         if not getattr(self,'report_range_canvas',None):return
         try:
-            xmin=float(self.report_view_xmin.get());xmax=float(self.report_view_xmax.get())
+            xmin=self.parse_report_x_view(self.report_view_xmin.get());xmax=self.parse_report_x_view(self.report_view_xmax.get())
             if not (math.isfinite(xmin) and math.isfinite(xmax) and 0<=xmin<xmax<=self.report_range_duration+.002):
                 raise ValueError('X limits must be within the recording.')
             y_limits=self.get_report_y_limits()
@@ -849,8 +908,7 @@ class App(tk.Tk):
 
     def reset_report_zoom(self):
         if not getattr(self,'report_range_canvas',None):return
-        self.report_view_xmin.set('0')
-        self.report_view_xmax.set(f'{self.report_range_duration:.3f}')
+        self.set_report_x_view_fields(0,self.report_range_duration)
         self.report_ymin.set('');self.report_ymax.set('')
         self.apply_report_scale()
 
