@@ -959,9 +959,14 @@ class App(tk.Tk):
         self.report_range_left=ax.axvline(0,color=TEAL,lw=1.5,ls='--')
         self.report_range_right=ax.axvline(duration,color=TEAL,lw=1.5,ls='--')
         def redraw(lo,hi):
-            self.report_range_shade.set_xy([[lo,0],[lo,1],[hi,1],[hi,0],[lo,0]])
-            self.report_excluded_left.set_xy([[0,0],[0,1],[lo,1],[lo,0],[0,0]])
-            self.report_excluded_right.set_xy([[hi,0],[hi,1],[duration,1],[duration,0],[hi,0]])
+            # axvspan returns Rectangle patches in current Matplotlib versions.
+            # Update the origin and width, rather than passing polygon vertices to set_xy.
+            self.report_range_shade.set_x(lo)
+            self.report_range_shade.set_width(hi-lo)
+            self.report_excluded_left.set_x(0)
+            self.report_excluded_left.set_width(lo)
+            self.report_excluded_right.set_x(hi)
+            self.report_excluded_right.set_width(duration-hi)
             self.report_range_left.set_xdata([lo,lo])
             self.report_range_right.set_xdata([hi,hi])
             canvas.draw_idle()
