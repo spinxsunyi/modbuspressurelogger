@@ -149,7 +149,7 @@ class App(tk.Tk):
         if name=='History': self.refresh_history()
         if name=='Reporting': self.refresh_reporting()
     def plot(self,parent):
-        fig=Figure(figsize=(4,2),dpi=100,facecolor='white'); ax=fig.add_subplot(111); fig.subplots_adjust(left=.09,right=.98,bottom=.33,top=.92)
+        fig=Figure(figsize=(4,2),dpi=100,facecolor='white'); ax=fig.add_subplot(111); fig.subplots_adjust(left=.09,right=.98,bottom=.23,top=.92)
         canvas=FigureCanvasTkAgg(fig,master=parent); canvas.get_tk_widget().pack(fill='both',expand=True)
         return fig,ax,canvas
     def chart_tools(self,canvas,parent,live):
@@ -745,7 +745,7 @@ class App(tk.Tk):
                 return f'{seconds//60:02}:{seconds%60:02}'
             return stamp(start+x*60,self.settings['utc_offset'])[5:19].replace('T',' ')
         ax.xaxis.set_major_formatter(FuncFormatter(time_label))
-        ax.tick_params(axis='x',labelrotation=35 if self.viewer_time_display.get()=='Date & time' else 0)
+        ax.tick_params(axis='x',labelrotation=20 if self.viewer_time_display.get()=='Date & time' else 0)
         for label in ax.get_xticklabels():
             label.set_horizontalalignment('right' if self.viewer_time_display.get()=='Date & time' else 'center')
         ax.set(xlabel='Elapsed time (mm:ss)' if self.viewer_time_display.get()=='Elapsed time' else 'Date & time',
@@ -971,7 +971,7 @@ class App(tk.Tk):
             self.lax.xaxis.set_major_locator(MaxNLocator(nbins=5, min_n_ticks=2))
             self.line.set_data([r['ts'] for r in rows],[r['value'] if r['quality']=='OK' else math.nan for r in rows]);self.lax.set_ylabel('Pressure ('+self.settings['unit']+')');self.lax.yaxis.set_major_formatter(FuncFormatter(lambda p,pos:f'{from_psi(p,self.settings["unit"]):,.1f}'))
             self.lax.xaxis.set_major_formatter(FuncFormatter(lambda x,pos:stamp(x,self.settings['utc_offset'])[11:19]))
-            self.lax.tick_params(axis='x',labelrotation=35)
+            self.lax.tick_params(axis='x',labelrotation=20)
             for label in self.lax.get_xticklabels():label.set_horizontalalignment('right')
             if self.follow.get():
                 self.lax.set_autoscaley_on(self.live_auto.get());self.lax.relim();self.lax.autoscale_view(scaley=self.live_auto.get());self.lax.set_xlim(max(rows[0]['ts'],end-seconds),max(end,rows[0]['ts']+1))
