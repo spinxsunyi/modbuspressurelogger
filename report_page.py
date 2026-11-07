@@ -251,8 +251,8 @@ def full_size_chart_figure(store, sid, unit='psi', time_range=None,
     # Always identify the actual chart interval, regardless of X-axis display mode.
     chart_from=time_range[0] if time_range is not None else (rows[0]['ts'] if rows else session['started'])
     chart_to=time_range[1] if time_range is not None else (rows[-1]['ts'] if rows else (session['ended'] or session['started']))
-    label(.045,.875,f'From: {stamp(chart_from,offset)}',8,color=gray)
-    label(.955,.875,f'To: {stamp(chart_to,offset)}',8,color=gray,ha='right')
+    label(.955,.879,f'From: {stamp(chart_from,offset)}',8,color=gray,ha='right')
+    label(.955,.860,f'To: {stamp(chart_to,offset)}',8,color=gray,ha='right')
     ax=fig.add_axes([.09,.145,.855,.715])
     start=session['started']
     ax.plot([(r['ts']-start)/60 for r in rows],
