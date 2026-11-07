@@ -119,6 +119,8 @@ class App(tk.Tk):
                   selectforeground=[('readonly',INK)])
         style.configure('Live.TCombobox',fieldbackground='white',background='white',foreground=INK,selectbackground='white',selectforeground=INK)
         style.map('Live.TCombobox',fieldbackground=[('readonly','white')],foreground=[('readonly',INK)],selectbackground=[('readonly','white')],selectforeground=[('readonly',INK)])
+        style.configure('Danger.TButton',background='#c62828',foreground='white',padding=(10,6),font=(UI_FONT,9,'bold'))
+        style.map('Danger.TButton',background=[('disabled','#d9e0e5'),('pressed','#a51e1e'),('active','#b32222'),('!disabled','#c62828')],foreground=[('disabled','#52616c'),('!disabled','white')])
         style.configure('Accent.TButton',background=TEAL,foreground='white',padding=(14,9),font=(UI_FONT,10,'bold'))
         # Disabled primary actions must lose their accent fill, not only dim the text.
         # State order matters: disabled is evaluated before active/pressed.
@@ -458,13 +460,13 @@ class App(tk.Tk):
         self.history.bind('<<TreeviewSelect>>',self.update_history_selection)
         footer=ttk.Frame(p);footer.pack(fill='x',pady=(10,0))
         self.history_selection=ttk.Label(footer,text='Select a recording to review',foreground='#576677')
-        self.history_selection.pack(side='left')
+        self.history_selection.pack(side='left',padx=(0,12))
         self.history_open=ttk.Button(footer,text='Open in Viewer',style='Accent.TButton',
                                      command=self.open_selected,state='disabled')
         self.history_open.pack(side='right')
-        self.history_delete=ttk.Button(footer,text='Delete recording',style='Compact.TButton',
+        self.history_delete=ttk.Button(footer,text='Delete recording',style='Danger.TButton',
                                        command=self.delete_selected_recording,state='disabled')
-        self.history_delete.pack(side='right',padx=(0,10))
+        self.history_delete.pack(side='left')
         self.history_report=ttk.Button(footer,text='Create Report',style='Accent.TButton',
                                        command=self.report_selected_recording,state='disabled')
         self.history_report.pack(side='right',padx=(0,10))
