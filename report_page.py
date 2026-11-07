@@ -7,14 +7,14 @@ from matplotlib.ticker import MaxNLocator, FuncFormatter
 from exports import stamp
 from units import from_psi
 
-def report_figure(store, sid, unit='psi', time_range=None, time_axis='Elapsed Time',show_events=True,show_grid=True):
+def report_figure(store, sid, unit='psi', time_range=None, time_axis='Elapsed Time',show_events=True,show_grid=True,y_limits=None):
     session=store.get(sid)
     if not session: raise ValueError('Recording no longer exists')
     details=json.loads(session['details'])
     settings=json.loads(session['settings'])
     offset=settings.get('utc_offset',8)
     rows=store.plot_rows(sid)
-    events=store.events(sid)
+    events=store.events(sid) if show_events else []
     if time_range is not None:
         lo,hi=time_range
         rows=[r for r in rows if lo<=r['ts']<=hi]
@@ -59,6 +59,7 @@ def report_figure(store, sid, unit='psi', time_range=None, time_axis='Elapsed Ti
         ax.annotate(str(i),(x,.96),xycoords=('data','axes fraction'),fontsize=7,color='#925b10',ha='center',va='top')
     configure_time_axis(ax,start,offset,time_axis)
     ax.set(ylabel=f'Pressure ({unit})')
+    if y_limits is not None:ax.set_ylim(*y_limits)
     if time_range is not None:ax.set_xlim((time_range[0]-start)/60,(time_range[1]-start)/60)
     ax.xaxis.set_major_locator(MaxNLocator(6))
     ax.grid(alpha=.22,visible=show_grid)
@@ -89,7 +90,7 @@ def report_figure(store, sid, unit='psi', time_range=None, time_axis='Elapsed Ti
     txt(.94,.029,'Page 1 of 1',7,color=gray,ha='right')
     return fig
 
-def graph_figure(store,sid,unit='psi',time_range=None,time_axis='Elapsed Time'):
+def graph_figure(store,sid,unit='psi',time_range=None,time_axis='Elapsed Time',show_events=True,show_grid=True,y_limits=None):
     session=store.get(sid)
     if not session:raise ValueError('Recording no longer exists')
     rows=store.plot_rows(sid);events=store.events(sid) if show_events else []
@@ -108,6 +109,7 @@ def graph_figure(store,sid,unit='psi',time_range=None,time_axis='Elapsed Time'):
         if i<=30:ax.annotate(str(i),(x,.96),xycoords=('data','axes fraction'),ha='center',va='top',fontsize=8)
     configure_time_axis(ax,start,offset,time_axis)
     ax.set(title=session['name'],ylabel=f'Pressure ({unit})')
+    if y_limits is not None:ax.set_ylim(*y_limits)
     if time_range is not None:ax.set_xlim((time_range[0]-start)/60,(time_range[1]-start)/60)
     ax.grid(alpha=.2,visible=show_grid);fig.tight_layout()
     return fig
