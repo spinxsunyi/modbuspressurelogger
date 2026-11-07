@@ -10,12 +10,10 @@ jobs:
           python-version: '3.12'
       - run: pip install -r requirements.txt pyinstaller==6.19.0 pytest
       - run: python -m pytest -q
-      - run: python seed_demo.py
       - name: Generate pressure gauge Windows icon
         run: python -c "from app_icon import export_windows_icon; export_windows_icon('assets/pressure_gauge.ico')"
       - run: pyinstaller --noconfirm --clean --windowed --onedir --name DigitalPressureRecorder --icon assets/pressure_gauge.ico --collect-all matplotlib app.py
       - run: Copy-Item README.md dist/DigitalPressureRecorder/
-      - run: Copy-Item data dist/DigitalPressureRecorder/data -Recurse
       - name: Package and verify portable ZIP
         shell: python
         run: |
@@ -26,6 +24,8 @@ jobs:
 
           root = Path("dist/DigitalPressureRecorder")
           exe = root / "DigitalPressureRecorder.exe"
+          if (root / "data").exists():
+              raise RuntimeError("Release must not include a data folder")
           avif = root / "_internal/PIL/_avif.cp312-win_amd64.pyd"
           for required in (exe, avif):
               if not required.is_file() or required.stat().st_size == 0:
