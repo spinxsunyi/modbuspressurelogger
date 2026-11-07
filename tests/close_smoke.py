@@ -28,16 +28,16 @@ with tempfile.TemporaryDirectory() as temp:
         app.tk.call(wm_callback)
         assert app.closing, 'WM_DELETE_WINDOW callback did not start shutdown'
         deadline=time.monotonic()+5
-        while app.winfo_exists() and time.monotonic()<deadline:
+        while not app._shutdown_complete and time.monotonic()<deadline:
             app.update()
             time.sleep(.02)
-        assert not app.winfo_exists(), 'Window remained open after close request'
+        assert app._shutdown_complete, 'Window did not reach shutdown completion'
         assert not app.engine.is_alive(), 'Worker thread remained active'
         log=Path(temp,'shutdown.log').read_text(encoding='utf-8')
         assert 'close requested' in log and 'worker stopped; destroying window' in log,log
         print('IDLE CLOSE PASS: X handler, worker shutdown, destroyed window')
     finally:
-        if app.winfo_exists():app.destroy()
+        if not app._shutdown_complete:app.destroy()
         if app.engine.is_alive():
             app.engine.send('quit')
             app.engine.join(timeout=3)
