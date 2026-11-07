@@ -30,6 +30,10 @@ try:
     a.slide_live(0);assert not a.follow.get();a.follow.set(True)
     # A native scrollbar replaces the miniature pressure plot.
     assert a.live_slider.winfo_class()=='TScrollbar'
+    assert a.window_seconds('Buffer data')==float('inf')
+    assert a.record_btn.cget('style')=='Stop.TButton'
+    assert a.event_btn.cget('style')=='Compact.TButton'
+    assert a.live_chart_tools.winfo_manager()=='pack'
     assert a.history_slider.winfo_class()=='TScrollbar'
     a.live_slider.on_scroll('moveto','0')
     assert not a.follow.get()
