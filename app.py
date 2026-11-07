@@ -556,7 +556,8 @@ class App(tk.Tk):
         ttk.Entry(options,textvariable=self.report_start,width=9).pack(side='left',padx=(4,9))
         ttk.Label(options,text='To').pack(side='left')
         ttk.Entry(options,textvariable=self.report_end,width=9).pack(side='left',padx=(4,9))
-        ttk.Button(options,text='Full recording',style='Compact.TButton',command=self.reset_report_range).pack(side='left',padx=(0,16))
+        ttk.Button(options,text='Select Time Range',style='Compact.TButton',command=self.select_report_range).pack(side='left',padx=(0,8))
+        ttk.Button(options,text='Full recording',style='Compact.TButton',command=self.reset_report_and_preview).pack(side='left',padx=(0,16))
         ttk.Label(options,text='Graph X-axis:').pack(side='left')
         self.report_axis=tk.StringVar(value='Elapsed Time')
         axis=ttk.Combobox(options,textvariable=self.report_axis,state='readonly',width=16,values=('Elapsed Time','Date & Time'))
@@ -612,6 +613,91 @@ class App(tk.Tk):
             self.reporting_figure_canvas=canvas
         except Exception as exc:
             ttk.Label(self.reporting_preview,text='Preview unavailable: '+str(exc)).pack(pady=30)
+
+    def reset_report_and_preview(self):
+        self.reset_report_range()
+        self.refresh_reporting()
+
+    def select_report_range(self):
+        """Select a report interval using the entire recording timeline."""
+        sid=getattr(self,'reporting_sid',None)
+        session=self.store.get(sid) if sid else None
+        if not session:return
+        if getattr(self,'report_range_dialog',None) and self.report_range_dialog.winfo_exists():
+            self.report_range_dialog.lift();return
+        from matplotlib.widgets import SpanSelector
+        from matplotlib.ticker import FuncFormatter,MaxNLocator
+        rows=self.store.plot_rows(sid)
+        if not rows:
+            messagebox.showinfo('Time range','No samples available.',parent=self);return
+        start=session['started']
+        end=session['ended'] or self.store.stats(sid)['last'] or rows[-1]['ts']
+        duration=max((end-start)/60,.001)
+        try:
+            selected=self.get_report_range()
+            initial=[(selected[0]-start)/60,(selected[1]-start)/60]
+        except ValueError:initial=[0,duration]
+        win=tk.Toplevel(self);win.title('Select Reporting Time Range')
+        win.geometry('1050x650');win.minsize(700,440);win.transient(self)
+        self.report_range_dialog=win
+        body=ttk.Frame(win,padding=14);body.pack(fill='both',expand=True)
+        ttk.Label(body,text='Select Reporting Time Range',font=(UI_FONT,15,'bold')).pack(anchor='w')
+        ttk.Label(body,text='Drag across the full recording to select a range. Use the minute fields for precise adjustments.',
+                  foreground='#576677').pack(anchor='w',pady=(3,10))
+        chart=ttk.Frame(body);chart.pack(fill='both',expand=True)
+        fig=Figure(figsize=(10,4),dpi=100,facecolor='white')
+        ax=fig.add_subplot(111);fig.subplots_adjust(left=.09,right=.98,top=.94,bottom=.20)
+        ax.plot([(r['ts']-start)/60 for r in rows],
+                [from_psi(r['value'],self.settings['unit']) if r['quality']=='OK' and r['value'] is not None else math.nan for r in rows],
+                color=TEAL,lw=1.2)
+        ax.set_xlim(0,duration);ax.set_ylabel('Pressure ('+self.settings['unit']+')')
+        ax.grid(alpha=.2);ax.xaxis.set_major_locator(MaxNLocator(8))
+        if self.report_axis.get()=='Date & Time':
+            offset=json.loads(session['settings']).get('utc_offset',8)
+            ax.xaxis.set_major_formatter(FuncFormatter(lambda x,pos:stamp(start+x*60,offset)[11:19]))
+            ax.set_xlabel('Time (UTC%+g)' % float(offset))
+        else:ax.set_xlabel('Elapsed time (minutes)')
+        graph=FigureCanvasTkAgg(fig,master=chart)
+        graph.get_tk_widget().pack(fill='both',expand=True)
+        fields=ttk.Frame(body);fields.pack(fill='x',pady=(10,6))
+        left=tk.StringVar(value=f'{initial[0]:.3f}')
+        right=tk.StringVar(value=f'{initial[1]:.3f}')
+        ttk.Label(fields,text='From (min)').pack(side='left')
+        ttk.Entry(fields,textvariable=left,width=12).pack(side='left',padx=(6,18))
+        ttk.Label(fields,text='To (min)').pack(side='left')
+        ttk.Entry(fields,textvariable=right,width=12).pack(side='left',padx=(6,18))
+        status=ttk.Label(fields,text='',foreground='#576677');status.pack(side='left')
+        shade=ax.axvspan(*initial,color=TEAL,alpha=.18)
+        lmark=ax.axvline(initial[0],color=TEAL,lw=1.5,ls='--')
+        rmark=ax.axvline(initial[1],color=TEAL,lw=1.5,ls='--')
+        def redraw(lo,hi):
+            shade.set_xy([[lo,0],[lo,1],[hi,1],[hi,0],[lo,0]])
+            lmark.set_xdata([lo,lo]);rmark.set_xdata([hi,hi])
+            status.config(text=f'{hi-lo:.2f} minutes selected')
+            graph.draw_idle()
+        def chosen(lo,hi):
+            lo=max(0,min(duration,lo));hi=max(0,min(duration,hi))
+            if hi-lo<.001:return
+            left.set(f'{lo:.3f}');right.set(f'{hi:.3f}')
+            redraw(lo,hi)
+        selector=SpanSelector(ax,chosen,'horizontal',useblit=True,interactive=True,
+                              props=dict(facecolor=TEAL,alpha=.12),drag_from_anywhere=True)
+        win.report_selector=selector
+        def apply():
+            try:lo=float(left.get());hi=float(right.get())
+            except ValueError:
+                messagebox.showerror('Invalid range','Enter numeric minute values.',parent=win);return
+            if not (math.isfinite(lo) and math.isfinite(hi) and 0<=lo<hi<=duration+.002):
+                messagebox.showerror('Invalid range',f'Choose 0 <= From < To <= {duration:.3f} minutes.',parent=win);return
+            self.report_start.set(f'{lo:.3f}');self.report_end.set(f'{hi:.3f}')
+            win.destroy();self.refresh_reporting()
+        def reset():
+            left.set('0');right.set(f'{duration:.3f}');redraw(0,duration)
+        buttons=ttk.Frame(body);buttons.pack(fill='x',pady=(8,0))
+        ttk.Button(buttons,text='Reset to Full Recording',command=reset).pack(side='left')
+        ttk.Button(buttons,text='Apply Range',style='Accent.TButton',command=apply).pack(side='right')
+        ttk.Button(buttons,text='Cancel',command=win.destroy).pack(side='right',padx=8)
+        redraw(*initial)
 
     def reset_report_range(self):
         sid=getattr(self,'reporting_sid',None)
