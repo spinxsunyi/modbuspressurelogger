@@ -651,13 +651,8 @@ class App(tk.Tk):
         ttk.Label(outer,text='About Digital Pressure Recorder',style='Title.TLabel').pack(anchor='w',pady=(8,16))
         content=ttk.Frame(outer)
         content.pack(anchor='w',fill='x')
-        # Constrain content width for comfortable reading on maximized screens.
-        def size_content(event):
-            content.configure(width=min(max(event.width-30,400),950))
-        outer.bind('<Configure>',lambda event:(canvas.configure(scrollregion=canvas.bbox('all')),size_content(event)),add='+')
-        content.pack_propagate(False)
-        # Allow the inner frame to determine its height while retaining a width cap.
-        content.pack_propagate(True)
+        # Let the canvas control page width. Avoid configuring a packed frame
+        # from its parent's Configure event, which can trigger a layout loop.
         def section_title(text):
             ttk.Label(content,text=text,font=(UI_FONT,12,'bold')).pack(anchor='w',pady=(14,7))
         def paragraph(text,space=7):
