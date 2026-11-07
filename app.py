@@ -464,7 +464,7 @@ class App(tk.Tk):
         self.history_open=ttk.Button(footer,text='Open in Viewer',style='Accent.TButton',
                                      command=self.open_selected,state='disabled')
         self.history_open.pack(side='right')
-        self.history_delete=ttk.Button(footer,text='Delete recording',style='Danger.TButton',
+        self.history_delete=ttk.Button(footer,text='Delete record',style='Danger.TButton',
                                        command=self.delete_selected_recording,state='disabled')
         self.history_delete.pack(side='left')
         self.history_report=ttk.Button(footer,text='Create Report',style='Accent.TButton',
