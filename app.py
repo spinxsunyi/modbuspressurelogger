@@ -531,23 +531,19 @@ class App(tk.Tk):
         ttk.Button(toolbar,text='Manual scale options',style='Compact.TButton',
                    command=self.show_viewer_scale_options).pack(side='left',padx=(8,0))
 
-        bottom=ttk.Frame(p);bottom.pack(side='bottom',fill='x',pady=(8,0))
-        bottom.columnconfigure(0,weight=1,uniform='bottom')
-        bottom.columnconfigure(1,weight=1,uniform='bottom')
-        self.viewer_panels={}
-        for col,title in enumerate(('Job details','Annotations')):
-            outer=ttk.Frame(bottom)
-            outer.grid(row=0,column=col,sticky='nsew',
-                       padx=(0,7) if col==0 else (7,0))
-            heading=ttk.Frame(outer);heading.pack(fill='x')
-            toggle=ttk.Button(heading,text='▾ '+title,style='Compact.TButton',
-                              command=lambda name=title:self.toggle_viewer_panel(name))
-            toggle.pack(side='left')
-            body=ttk.Frame(outer,padding=8,relief='solid',borderwidth=1)
-            body.pack(fill='x',pady=(4,0))
-            self.viewer_panels[title]=(body,toggle)
-        details=self.viewer_panels['Job details'][0]
-        annotations=self.viewer_panels['Annotations'][0]
+        self.viewer_bottom=ttk.Frame(p)
+        self.viewer_bottom.pack(side='bottom',fill='x',pady=(4,0))
+        self.viewer_bottom_toggle=ttk.Button(self.viewer_bottom,text='▾ Details & Annotations',
+                                             style='Compact.TButton',command=self.toggle_viewer_panel)
+        self.viewer_bottom_toggle.pack(anchor='w')
+        self.viewer_bottom_content=ttk.Frame(self.viewer_bottom)
+        self.viewer_bottom_content.pack(fill='x',pady=(4,0))
+        self.viewer_bottom_content.columnconfigure(0,weight=1,uniform='bottom')
+        self.viewer_bottom_content.columnconfigure(1,weight=1,uniform='bottom')
+        details=ttk.LabelFrame(self.viewer_bottom_content,text='Job details',padding=8)
+        details.grid(row=0,column=0,sticky='nsew',padx=(0,7))
+        annotations=ttk.LabelFrame(self.viewer_bottom_content,text='Annotations',padding=8)
+        annotations.grid(row=0,column=1,sticky='nsew',padx=(7,0))
         details.columnconfigure(0,weight=1);details.columnconfigure(1,weight=1)
         self.viewer_details=ttk.Label(details,text='—',justify='left',anchor='nw')
         self.viewer_details.grid(row=0,column=0,sticky='nw',padx=(4,12),pady=(2,6))
@@ -556,7 +552,8 @@ class App(tk.Tk):
         ttk.Button(details,text='Edit job details',style='Compact.TButton',
                    command=self.edit_viewer_details).grid(row=1,column=0,columnspan=2,sticky='w')
         actions=ttk.Frame(annotations);actions.pack(fill='x',pady=(0,5))
-        ttk.Label(actions,text='Click the chart to set annotation time',foreground='#576677').pack(side='left')
+        ttk.Label(actions,text='Right-click chart to annotate; left-click to select time',
+                  foreground='#576677').pack(side='left')
         ttk.Button(actions,text='Edit selected',style='Compact.TButton',
                    command=self.edit_annotation).pack(side='right',padx=(5,0))
         ttk.Button(actions,text='+ Add annotation',style='Compact.TButton',
@@ -569,11 +566,14 @@ class App(tk.Tk):
         self.events_tree.pack(fill='x')
         self.events_tree.bind('<Double-1>',lambda e:self.edit_annotation())
         self.events_tree.bind('<<TreeviewSelect>>',self.select_history_event)
-        self.annotation_time=tk.StringVar(value='0')
+        self.annotation_time=tk.StringVar(value='')
 
         chart=ttk.Frame(p);chart.pack(fill='both',expand=True)
         self.vfig,self.vax,self.vcanvas=self.plot(chart)
         self.vcanvas.mpl_connect('button_press_event',self.chart_click)
+        self.viewer_annotation_menu=tk.Menu(self,tearoff=0)
+        self.viewer_annotation_menu.add_command(label='Add annotation here',
+                                                 command=self.add_annotation)
         self.history_slider=TimeScrollbar(chart,self.slide_history)
         self.history_slider.pack(side='bottom',before=self.vcanvas.get_tk_widget(),fill='x')
         self.history_labels=tk.BooleanVar(value=True)
@@ -584,14 +584,14 @@ class App(tk.Tk):
                                             ('ymin','0'),('ymax','3000')]}
         self.chart_tools(self.vcanvas,chart,False)
 
-    def toggle_viewer_panel(self,name):
-        body,toggle=self.viewer_panels[name]
-        if body.winfo_manager():
-            body.pack_forget()
-            toggle.configure(text='▸ '+name)
+    def toggle_viewer_panel(self):
+        content=self.viewer_bottom_content
+        if content.winfo_manager():
+            content.pack_forget()
+            self.viewer_bottom_toggle.configure(text='▸ Details & Annotations')
         else:
-            body.pack(fill='x',pady=(4,0))
-            toggle.configure(text='▾ '+name)
+            content.pack(fill='x',pady=(4,0))
+            self.viewer_bottom_toggle.configure(text='▾ Details & Annotations')
 
     def load_viewer(self,sid):
         if not sid:return
@@ -606,6 +606,7 @@ class App(tk.Tk):
             f'Notes: {d.get("notes") or "—"}'
         )))
         self.update_viewer_summary()
+        self.annotation_time.set('')
         end=max(.01,((self.vrows[-1]['ts'] if self.vrows else self.vsession['started']+60)-self.vsession['started'])/60)
         vals=[r['value'] for r in self.vrows if r['value'] is not None]; maximum=max(vals) if vals else 3000
         v={'title':d.get('well') or self.vsession['name'],'xmin':0,'xmax':end,'ymin':min(0,min(vals)) if vals else 0,'ymax':max(1,maximum*1.1),**json.loads(self.vsession['view'])}
@@ -679,15 +680,39 @@ class App(tk.Tk):
                    command=win.destroy).grid(row=4,column=0,columnspan=2,sticky='ew')
 
     def chart_click(self,event):
-        if event.inaxes==self.vax and event.xdata is not None:self.annotation_time.set(f'{event.xdata:.5f}')
+        if event.inaxes!=self.vax or event.xdata is None or not self.viewer_sid:
+            return
+        # Ignore middle-button pan and other navigation modes.
+        if event.button not in (1,3):return
+        if getattr(self.vcanvas.toolbar,'mode',''):return
+        self.annotation_time.set(f'{event.xdata:.8f}')
+        if event.button==3:
+            # Matplotlib button_press_event exposes GUI pixel coordinates.
+            widget=self.vcanvas.get_tk_widget()
+            self.viewer_annotation_menu.tk_popup(widget.winfo_rootx()+int(event.x),
+                                                 widget.winfo_rooty()+widget.winfo_height()-int(event.y))
+            self.viewer_annotation_menu.grab_release()
+        else:
+            self.footer.config(text='Annotation position selected — right-click to add annotation')
     def add_annotation(self):
+        if not self.viewer_sid:return
         try:
-            ts=self.vsession['started']+float(self.annotation_time.get())*60
-            last=self.store.stats(self.viewer_sid)['last'] or self.vsession['started']
-            if not self.vsession['started']<=ts<=last:raise ValueError('Choose a time within the recording')
-            label=simpledialog.askstring('Review annotation','Label:',parent=self)
-            if label:self.store.event(self.viewer_sid,ts,label,'Review');self.vevents=self.store.events(self.viewer_sid);self.paint_viewer()
-        except Exception as e:messagebox.showerror('Annotation',str(e))
+            selected=self.annotation_time.get().strip()
+            if not selected:
+                messagebox.showinfo('Add annotation','Left-click a time on the chart, or right-click the chart and select Add annotation here.')
+                return
+            ts=self.vsession['started']+float(selected)*60
+            last=self.vsession['ended'] or self.store.stats(self.viewer_sid)['last'] or self.vsession['started']
+            if not self.vsession['started']<=ts<=last:
+                raise ValueError('Choose a time within the recording.')
+            label=simpledialog.askstring('Review annotation',
+                                         'Label for '+stamp(ts,self.settings['utc_offset'])[11:19]+':',
+                                         parent=self)
+            if label and label.strip():
+                self.store.event(self.viewer_sid,ts,label.strip(),'Review')
+                self.vevents=self.store.events(self.viewer_sid)
+                self.paint_viewer()
+        except ValueError as e:messagebox.showerror('Annotation',str(e))
     def edit_annotation(self):
         selected=self.events_tree.selection()
         if not selected:return
