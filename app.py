@@ -120,10 +120,10 @@ class App(tk.Tk):
         style.configure('TLabelframe',background=BG,relief='solid',borderwidth=1)
         style.configure('TLabelframe.Label',font=(UI_FONT,11,'bold'),foreground=NAVY,background=BG)
         nav=tk.Frame(self,bg='#17334c'); nav.pack(fill='x')
-        self.brand=tk.Label(nav,text='Digital Pressure Recorder',font=(UI_FONT,15,'bold'),bg=NAVY,fg='white',padx=12,pady=4); self.brand.pack(side='left')
+        self.brand=tk.Label(nav,text='Digital Pressure Recorder',font=(UI_FONT,15,'bold'),bg=NAVY,fg='white',padx=12,pady=2); self.brand.pack(side='left')
         self.nav_buttons={}
         for page in ['Live Monitor','History','Reporting','Settings','About']:
-            button=tk.Button(nav,text=page,command=lambda p=page:self.show(p),bg=NAVY,fg='white',activebackground=TEAL_DARK,activeforeground='white',relief='flat',bd=0,padx=10,pady=4,font=(UI_FONT,9))
+            button=tk.Button(nav,text=page,command=lambda p=page:self.show(p),bg=NAVY,fg='white',activebackground=TEAL_DARK,activeforeground='white',relief='flat',bd=0,padx=10,pady=2,font=(UI_FONT,9))
             button.pack(side='left'); self.nav_buttons[page]=button
         self.global_status=tk.Label(nav,text='SIMULATION',bg='#17334c',fg='#ffcb72',padx=15); self.global_status.pack(side='right')
         self.credit=tk.Label(self,text='Created by Eka Yudhi Pratama  •  November 2026',bg='#17334c',fg='white')
@@ -234,20 +234,20 @@ class App(tk.Tk):
         self.reading_status=tk.Label(top,text='Waiting for first reading',bg=BG,fg=INK,font=(UI_FONT,9),anchor='w')
         self.reading_status.pack(side='left',padx=(0,8))
         self.drop=tk.BooleanVar(); ttk.Checkbutton(top,text='Simulate disconnect',variable=self.drop,command=lambda:self.engine.send('drop',self.drop.get())).pack(side='right')
-        body=ttk.Panedwindow(p,orient='horizontal'); body.pack(fill='both',expand=True,pady=(2,4))
+        body=ttk.Panedwindow(p,orient='horizontal'); body.pack(fill='both',expand=True,pady=(2,2))
         main=ttk.Frame(body); self.details_panel=ttk.LabelFrame(body,text='Recording details  |  autosaved',padding=10); body.add(main,weight=5); body.add(self.details_panel,weight=1); self.live_pane=body
-        readings=ttk.Frame(main);readings.pack(fill='x',pady=(0,4))
+        readings=ttk.Frame(main);readings.pack(fill='x',pady=(0,2))
         for col in range(3):readings.columnconfigure(col,weight=1,uniform='metric')
         def metric_card(column,title,highlight=False):
             bg=PALE_TEAL if highlight else SURFACE
             panel=tk.Frame(readings,bg=bg,highlightthickness=1,
                            highlightbackground='#a9d6d4' if highlight else BORDER)
             panel.grid(row=0,column=column,sticky='nsew',padx=(0,8) if column<2 else (0,0))
-            tk.Label(panel,text=title,bg=bg,fg=NAVY,font=(UI_FONT,11,'bold'),
-                     anchor='w').pack(fill='x',padx=12,pady=(4,0))
+            tk.Label(panel,text=title,bg=bg,fg=NAVY,font=(UI_FONT,10,'bold'),
+                     anchor='w').pack(fill='x',padx=12,pady=(2,0))
             return panel,bg
         live_card,live_bg=metric_card(0,'Live pressure',True)
-        self.value=tk.Label(live_card,text='—',font=(UI_FONT,25,'bold'),bg=live_bg,
+        self.value=tk.Label(live_card,text='—',font=(UI_FONT,20,'bold'),bg=live_bg,
                             fg=TEAL_DARK,anchor='w')
         self.value.pack(fill='x',padx=12,pady=(0,2))
         self.metric=[]
