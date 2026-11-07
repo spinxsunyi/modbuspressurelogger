@@ -32,10 +32,13 @@ try:
     assert json.loads(a.store.get(sid)['details'])['well']=='UI TEST'
     a.add_live_event();assert len(a.store.events(sid))==1
     a.live_min.set('0');a.live_max.set('3000');a.apply_live_scale();assert a.lax.get_ylim()==(0,3000)
-    a.live_auto.set(True);a.toggle_live_auto_scale()
+    a.scale_mode.set('Auto');a.select_live_scale()
+    assert a.live_auto.get() and a.lax.get_autoscaley_on()
+    a.scale_mode.set('Manual');a.select_live_scale()
+    assert not a.live_auto.get() and not a.lax.get_autoscaley_on()
+    assert a.lax.get_ylim()==(0,3000)
+    a.scale_mode.set('Auto');a.select_live_scale()
     assert a.lax.get_autoscaley_on()
-    a.live_auto.set(False);a.toggle_live_auto_scale()
-    assert not a.lax.get_autoscaley_on()
     a.slide_live(0);assert not a.follow.get();a.follow.set(True)
     # A native scrollbar replaces the miniature pressure plot.
     assert a.live_slider.winfo_class()=='TScrollbar'
