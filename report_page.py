@@ -7,7 +7,7 @@ from matplotlib.ticker import MaxNLocator, FuncFormatter
 from exports import stamp
 from units import from_psi
 
-def report_figure(store, sid, unit='psi', time_range=None, time_axis='Elapsed Time'):
+def report_figure(store, sid, unit='psi', time_range=None, time_axis='Elapsed Time',show_events=True,show_grid=True):
     session=store.get(sid)
     if not session: raise ValueError('Recording no longer exists')
     details=json.loads(session['details'])
@@ -61,7 +61,7 @@ def report_figure(store, sid, unit='psi', time_range=None, time_axis='Elapsed Ti
     ax.set(ylabel=f'Pressure ({unit})')
     if time_range is not None:ax.set_xlim((time_range[0]-start)/60,(time_range[1]-start)/60)
     ax.xaxis.set_major_locator(MaxNLocator(6))
-    ax.grid(alpha=.22)
+    ax.grid(alpha=.22,visible=show_grid)
     ax.tick_params(labelsize=8)
     txt(.06,.383,'MIN  '+fmt(ext[0]),8,True)
     txt(.31,.383,'MAX  '+fmt(ext[1]),8,True)
@@ -92,7 +92,7 @@ def report_figure(store, sid, unit='psi', time_range=None, time_axis='Elapsed Ti
 def graph_figure(store,sid,unit='psi',time_range=None,time_axis='Elapsed Time'):
     session=store.get(sid)
     if not session:raise ValueError('Recording no longer exists')
-    rows=store.plot_rows(sid);events=store.events(sid)
+    rows=store.plot_rows(sid);events=store.events(sid) if show_events else []
     offset=json.loads(session['settings']).get('utc_offset',8)
     if time_range is not None:
         lo,hi=time_range
@@ -109,7 +109,7 @@ def graph_figure(store,sid,unit='psi',time_range=None,time_axis='Elapsed Time'):
     configure_time_axis(ax,start,offset,time_axis)
     ax.set(title=session['name'],ylabel=f'Pressure ({unit})')
     if time_range is not None:ax.set_xlim((time_range[0]-start)/60,(time_range[1]-start)/60)
-    ax.grid(alpha=.2);fig.tight_layout()
+    ax.grid(alpha=.2,visible=show_grid);fig.tight_layout()
     return fig
 
 def configure_time_axis(ax,start,offset,mode):
