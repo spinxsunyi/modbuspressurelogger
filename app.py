@@ -256,10 +256,24 @@ class App(tk.Tk):
                 self.viewer_scale_mode.set('Auto')
                 self.auto_history_scale()
                 self.slide_history(0)
-        labels=[('Reset',reset),('−',lambda:zoom(1.5)),('+',lambda:zoom(2/3)),('✥ Pan' if live else '✥',tools.pan)]
+        def toggle_pan():
+            tools.pan()
+            refresh_pan_button()
+        def refresh_pan_button():
+            active=bool(tools.mode)
+            pan_button.configure(bg=TEAL if active else '#edf2f6',
+                                 fg='white' if active else INK,
+                                 activebackground=TEAL_DARK if active else '#dce8ef',
+                                 activeforeground='white' if active else INK,
+                                 relief='sunken' if active else 'raised')
+        labels=[('Reset',reset),('−',lambda:zoom(1.5)),('+',lambda:zoom(2/3))]
+        pan_button=tk.Button(bar,text='✥ Pan' if live else '✥',command=toggle_pan,
+                             width=6 if live else 4,font=(UI_FONT,9),bd=1,padx=3,pady=3)
+        pan_button.pack(side='right',padx=2)
+        refresh_pan_button()
         for label,cmd in labels:
             ttk.Button(bar,text=label,command=cmd,style='Compact.TButton',
-                       width=7 if label=='✥ Pan' else (4 if label=='✥' else (6 if label!='Reset' else 7))).pack(side='right',padx=2)
+                       width=6 if label!='Reset' else 7).pack(side='right',padx=2)
 
     def auto_history_scale(self):
         valid=[r['value'] for r in self.vrows if r['quality']=='OK' and r['value'] is not None]
