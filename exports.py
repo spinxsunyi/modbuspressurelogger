@@ -4,6 +4,7 @@ from app_icon import gauge_image
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from matplotlib.figure import Figure
+from chart_scale import apply_report_time_scale, apply_pressure_grid, apply_engineering_grid
 
 def stamp(ts,offset=8):
     return datetime.fromtimestamp(ts,timezone(timedelta(hours=float(offset)))).isoformat(timespec='milliseconds')
@@ -16,8 +17,18 @@ def figure(rows,events,session,view):
         x=(e['ts']-start)/60; ax.axvline(x,color='#cc8b19',lw=.8,ls='--'); ax.annotate(e['label'],(x,.97),xycoords=('data','axes fraction'),rotation=90,va='top',fontsize=8)
     ax.set(xlabel='Elapsed time (minutes)',ylabel=f"Pressure ({'psi'})",title=view.get('title') or session['name'])
     if view.get('ymin') is not None and view.get('ymax') is not None: ax.set_ylim(view['ymin'],view['ymax'])
-    if view.get('xmin') is not None and view.get('xmax') is not None: ax.set_xlim(view['xmin'],view['xmax'])
-    ax.grid(alpha=.2); fig.text(.01,.01,f"{session['mode'].upper()} | Start: {stamp(start,offset)}",fontsize=8); fig.text(.5,.01,f"Recording min: {view.get('recording_min', '—')} | max: {view.get('recording_max', '—')} {'psi'}",fontsize=8); fig.tight_layout(rect=(0,.04,1,1)); return fig
+    if view.get('xmin') is not None and view.get('xmax') is not None:
+        left,right=view['xmin'],view['xmax']
+    elif rows:
+        left,right=(rows[0]['ts']-start)/60,(rows[-1]['ts']-start)/60
+    else:
+        left,right=0,1
+    # The Excel embedded image and legacy PNG/PDF exports share the same
+    # engineering time/pressure divisions as the dedicated report charts.
+    apply_report_time_scale(ax,left,right if right>left else left+1/60)
+    apply_pressure_grid(ax,*ax.get_ylim())
+    apply_engineering_grid(ax)
+    fig.text(.01,.01,f"{session['mode'].upper()} | Start: {stamp(start,offset)}",fontsize=8); fig.text(.5,.01,f"Recording min: {view.get('recording_min', '—')} | max: {view.get('recording_max', '—')} {'psi'}",fontsize=8); fig.tight_layout(rect=(0,.04,1,1)); return fig
 
 def export(store,sid,path,view,selected=False,resolution=None):
     path=Path(path); tmp=path.with_name(path.stem+'.partial'+path.suffix)
@@ -106,20 +117,23 @@ def export(store,sid,path,view,selected=False,resolution=None):
                     for title,interval in data_sets:
                         cursor=c.execute('SELECT * FROM samples WHERE session=? AND ts>=? AND ts<=? ORDER BY ts,id',(sid,lo,hi))
                         sheet=None;row=0;part=0
+                        include_minutes=title in ('1 Minute','10 Minutes')
+                        sheet_columns=(columns[:2]+['elapsed_minute']+columns[2:]) if include_minutes else columns
                         for row_values in data_rows(cursor,interval):
                             if sheet is None or row>=1048576:
                                 part+=1
                                 name=title if part==1 else f'{title} {part}'
                                 sheet=book.add_worksheet(name)
                                 sheet.set_row(0,32)
-                                sheet.write_row(0,0,columns,table_header)
+                                sheet.write_row(0,0,sheet_columns,table_header)
                                 sheet.freeze_panes(1,0)
                                 sheet.set_column(0,0,32)
-                                sheet.set_column(1,len(columns)-1,23)
+                                sheet.set_column(1,len(sheet_columns)-1,23)
                                 row=1
                             local_dt=datetime.fromisoformat(row_values[0]).replace(tzinfo=None)
                             sheet.write_datetime(row,0,local_dt,excel_datetime)
-                            sheet.write_row(row,1,row_values[1:]);row+=1
+                            sheet_values=(row_values[:2]+[row_values[1]/60]+row_values[2:]) if include_minutes else row_values
+                            sheet.write_row(row,1,sheet_values[1:]);row+=1
                         if sheet is None:
                             sheet=book.add_worksheet(title)
                             sheet.write_row(0,0,columns,table_header)
