@@ -539,16 +539,16 @@ class App(tk.Tk):
         p=self.pages['Reporting']
         bar=ttk.Frame(p);bar.pack(fill='x',pady=(0,8))
         ttk.Label(bar,text='Reporting',style='Title.TLabel').pack(side='left')
-        ttk.Button(bar,text='Select from History',style='Compact.TButton',
-                   command=lambda:self.show('History')).pack(side='right')
         self.reporting_record=tk.StringVar(value='No recording selected')
-        ttk.Label(p,textvariable=self.reporting_record,font=(UI_FONT,12,'bold')).pack(anchor='w',pady=(0,8))
+        selected=ttk.Frame(p);selected.pack(fill='x',pady=(0,10))
+        ttk.Label(selected,textvariable=self.reporting_record,font=(UI_FONT,12,'bold')).pack(side='left',padx=(0,14))
+        ttk.Button(selected,text='Select from History',style='Compact.TButton',command=lambda:self.show('History')).pack(side='left')
 
         navigation=ttk.Frame(p);navigation.pack(fill='x',pady=(0,10))
         self.report_step=1
         self.report_step_buttons=[]
         for number,name in enumerate(('1. Time Range','2. Graph Options','3. Preview & Export'),1):
-            button=ttk.Button(navigation,text=name,style='Compact.TButton',
+            button=tk.Button(navigation,text=name,relief='flat',bd=1,padx=16,pady=9,
                               command=lambda n=number:self.show_report_step(n))
             button.pack(side='left',padx=(0,10))
             self.report_step_buttons.append(button)
@@ -559,22 +559,37 @@ class App(tk.Tk):
             self.report_steps.append(frame)
 
         one=self.report_steps[0]
-        ttk.Label(one,text='Step 1 — Select reporting interval',font=(UI_FONT,12,'bold')).pack(anchor='w',pady=(0,8))
-        options=ttk.Frame(one);options.pack(fill='x',pady=(0,8))
+        section=ttk.LabelFrame(one,text='Step 1 — Select Reporting Interval',padding=16)
+        section.pack(fill='both',expand=True,pady=(0,10))
         self.report_start=tk.StringVar(value='0')
         self.report_end=tk.StringVar(value='0')
-        ttk.Label(options,text='From (minutes)').pack(side='left')
-        ttk.Entry(options,textvariable=self.report_start,width=12).pack(side='left',padx=(6,16))
-        ttk.Label(options,text='To (minutes)').pack(side='left')
-        ttk.Entry(options,textvariable=self.report_end,width=12).pack(side='left',padx=(6,16))
-        ttk.Button(options,text='Select on Graph',style='Compact.TButton',
-                   command=self.select_report_range).pack(side='left',padx=(0,8))
-        ttk.Button(options,text='Full Recording',style='Compact.TButton',
-                   command=self.reset_report_range).pack(side='left')
-        ttk.Label(one,text='Use Select on Graph to drag across the full pressure timeline, or enter precise elapsed minutes.',
-                  foreground='#576677').pack(anchor='w',pady=(4,12))
-        ttk.Button(one,text='Continue to Graph Options  >',style='Compact.TButton',
-                   command=lambda:self.show_report_step(2)).pack(anchor='e')
+        self.report_range_mode=tk.StringVar(value='full')
+        modes=ttk.Frame(section);modes.pack(fill='x',pady=(0,10))
+        ttk.Radiobutton(modes,text='Full Recording',value='full',variable=self.report_range_mode,
+                        command=self.change_report_range_mode).pack(side='left',padx=(0,25))
+        ttk.Radiobutton(modes,text='Select Time Range on Graph',value='custom',variable=self.report_range_mode,
+                        command=self.change_report_range_mode).pack(side='left')
+        fields=ttk.Frame(section);fields.pack(fill='x',pady=(0,8))
+        ttk.Label(fields,text='From (minutes)').pack(side='left')
+        self.report_from_entry=ttk.Entry(fields,textvariable=self.report_start,width=12)
+        self.report_from_entry.pack(side='left',padx=(6,16))
+        ttk.Label(fields,text='To (minutes)').pack(side='left')
+        self.report_to_entry=ttk.Entry(fields,textvariable=self.report_end,width=12)
+        self.report_to_entry.pack(side='left',padx=(6,16))
+        ttk.Label(section,text='Select a span directly on the full recording graph, or edit the minute values precisely.',
+                  foreground='#576677').pack(anchor='w',pady=(0,8))
+        self.report_range_chart=ttk.Frame(section)
+        self.report_range_chart.pack(fill='both',expand=True)
+        self.report_range_hint=ttk.Label(self.report_range_chart,
+                 text='Select a recording from History to display its pressure timeline.',
+                 foreground='#576677')
+        self.report_range_hint.pack(pady=55)
+        self.report_inline_sid=None
+        self.report_range_canvas=None
+        footer=ttk.Frame(one);footer.pack(fill='x')
+        ttk.Button(footer,text='Continue to Graph Options  >',style='Compact.TButton',
+                   command=lambda:self.show_report_step(2)).pack(side='right')
+        self.change_report_range_mode()
 
         two=self.report_steps[1]
         ttk.Label(two,text='Step 2 — Graph options',font=(UI_FONT,12,'bold')).pack(anchor='w',pady=(0,10))
@@ -635,7 +650,13 @@ class App(tk.Tk):
         self.report_step=step
         self.report_steps[step-1].pack(fill='both',expand=True)
         for index,button in enumerate(self.report_step_buttons,1):
-            button.state(['disabled'] if index==step else ['!disabled'])
+            active=index==step
+            button.configure(bg=TEAL if active else SURFACE,
+                             fg='white' if active else INK,
+                             activebackground=TEAL_DARK if active else PALE_TEAL,
+                             activeforeground='white' if active else INK,
+                             highlightthickness=0)
+        if step==1:self.refresh_inline_range_graph()
         if step==3:self.refresh_reporting()
 
     def open_reporting(self,sid):
@@ -643,6 +664,9 @@ class App(tk.Tk):
             messagebox.showwarning('Reporting','Please select a valid recording.',parent=self)
             return
         self.reporting_sid=sid
+        self.report_range_mode.set('full')
+        self.report_range_sid=None
+        self.report_inline_sid=None
         self.show_report_step(1,validate=False)
         self.show('Reporting')
 
@@ -677,6 +701,77 @@ class App(tk.Tk):
             self.reporting_figure_canvas=canvas
         except Exception as exc:
             ttk.Label(self.reporting_preview,text='Preview unavailable: '+str(exc)).pack(pady=30)
+
+    def change_report_range_mode(self):
+        custom=self.report_range_mode.get()=='custom'
+        if not custom and getattr(self,'report_range_sid',None):
+            self.reset_report_range()
+        if hasattr(self,'report_from_entry'):
+            for widget in (self.report_from_entry,self.report_to_entry):
+                widget.configure(state='normal' if custom else 'disabled')
+        if getattr(self,'report_range_canvas',None):
+            self.report_range_selector.set_active(custom)
+            self.report_range_shade.set_visible(custom)
+            self.report_range_left.set_visible(custom)
+            self.report_range_right.set_visible(custom)
+            self.report_range_canvas.draw_idle()
+
+    def refresh_inline_range_graph(self):
+        sid=getattr(self,'reporting_sid',None)
+        session=self.store.get(sid) if sid else None
+        if not session:return
+        if self.report_range_sid!=sid:self.reset_report_range()
+        if self.report_inline_sid==sid:return
+        from matplotlib.widgets import SpanSelector
+        from matplotlib.ticker import MaxNLocator
+        rows=self.store.plot_rows(sid)
+        if not rows:return
+        for widget in self.report_range_chart.winfo_children():widget.destroy()
+        start=session['started']
+        end=session['ended'] or self.store.stats(sid)['last'] or rows[-1]['ts']
+        duration=max((end-start)/60,.001)
+        fig=Figure(figsize=(10,4),dpi=100,facecolor='white')
+        ax=fig.add_subplot(111)
+        fig.subplots_adjust(left=.07,right=.98,top=.95,bottom=.17)
+        ax.plot([(r['ts']-start)/60 for r in rows],
+                [from_psi(r['value'],self.settings['unit']) if r['quality']=='OK' and r['value'] is not None else math.nan for r in rows],
+                color=TEAL,lw=1.2)
+        ax.set_xlim(0,duration)
+        ax.set_ylabel('Pressure ('+self.settings['unit']+')')
+        ax.set_xlabel('Elapsed time (minutes)')
+        ax.xaxis.set_major_locator(MaxNLocator(9))
+        ax.grid(alpha=.2)
+        canvas=FigureCanvasTkAgg(fig,master=self.report_range_chart)
+        canvas.get_tk_widget().pack(fill='both',expand=True)
+        self.report_range_shade=ax.axvspan(0,duration,color=TEAL,alpha=.16)
+        self.report_range_left=ax.axvline(0,color=TEAL,lw=1.5,ls='--')
+        self.report_range_right=ax.axvline(duration,color=TEAL,lw=1.5,ls='--')
+        def redraw(lo,hi):
+            self.report_range_shade.set_xy([[lo,0],[lo,1],[hi,1],[hi,0],[lo,0]])
+            self.report_range_left.set_xdata([lo,lo])
+            self.report_range_right.set_xdata([hi,hi])
+            canvas.draw_idle()
+        def selected(lo,hi):
+            lo=max(0,min(duration,lo));hi=max(0,min(duration,hi))
+            if hi-lo<.001:return
+            self.report_start.set(f'{lo:.3f}')
+            self.report_end.set(f'{hi:.3f}')
+            redraw(lo,hi)
+        self.report_range_selector=SpanSelector(ax,selected,'horizontal',useblit=True,
+                            interactive=True,drag_from_anywhere=True,
+                            props=dict(facecolor=TEAL,alpha=.12))
+        def sync_fields(*_):
+            if self.report_range_mode.get()!='custom':return
+            try:
+                lo=float(self.report_start.get());hi=float(self.report_end.get())
+                if 0<=lo<hi<=duration+.002:redraw(lo,hi)
+            except ValueError:pass
+        self.report_start.trace_add('write',sync_fields)
+        self.report_end.trace_add('write',sync_fields)
+        self.report_range_canvas=canvas
+        self.report_inline_sid=sid
+        self.change_report_range_mode()
+        canvas.draw()
 
     def reset_report_and_preview(self):
         self.reset_report_range()
