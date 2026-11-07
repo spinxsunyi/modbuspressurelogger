@@ -326,20 +326,22 @@ class App(tk.Tk):
         ttk.Button(bar,text='Refresh',style='Compact.TButton',
                    command=self.refresh_history).pack(side='left')
         ttk.Label(p,text='Search by well, job, engineer or record ID. Double-click a recording to open it.',
-                  foreground='#576677').pack(anchor='w',pady=(0,8))
+                  foreground='#576677').pack(anchor='w',pady=(0,5))
+        ttk.Label(p,text='Reporting is available: select the appropriate recording, then click Open in Viewer to review and export the report.',
+                  foreground=TEAL_DARK,wraplength=1100).pack(anchor='w',pady=(0,10))
 
         table=ttk.Frame(p);table.pack(fill='both',expand=True)
-        cols=('start','well','job','duration','mode','status')
+        cols=('start','well','job','engineer','duration','mode','status')
         self.history=ttk.Treeview(table,columns=cols,show='headings',selectmode='browse')
-        widths={'start':(180,155),'well':(280,130),'job':(260,115),
-                'duration':(115,85),'mode':(145,100),'status':(140,90)}
+        widths={'start':(175,145),'well':(240,130),'job':(200,115),
+                'engineer':(190,120),'duration':(105,85),'mode':(125,95),'status':(125,90)}
         labels={'start':'Started','well':'Well / Recording','job':'Job',
-                'duration':'Duration','mode':'Source','status':'Status'}
+                'engineer':'Engineer','duration':'Duration','mode':'Source','status':'Status'}
         for col in cols:
             self.history.heading(col,text=labels[col])
             width,minimum=widths[col]
             self.history.column(col,width=width,minwidth=minimum,stretch=True,
-                                anchor='w' if col in ('start','well','job') else 'center')
+                                anchor='w' if col in ('start','well','job','engineer') else 'center')
         vertical=ttk.Scrollbar(table,orient='vertical',command=self.history.yview)
         horizontal=ttk.Scrollbar(table,orient='horizontal',command=self.history.xview)
         self.history.configure(yscrollcommand=vertical.set,xscrollcommand=horizontal.set)
@@ -383,6 +385,7 @@ class App(tk.Tk):
                 values=(stamp(session['started'],self.settings['utc_offset'])[:19].replace('T',' '),
                         details.get('well') or session['name'],
                         details.get('job') or '—',
+                        details.get('engineer') or '—',
                         duration_text,session['mode'],session['state']))
         count=len(records)
         self.history_count.configure(text=f'{count} recording'+('' if count==1 else 's')+
