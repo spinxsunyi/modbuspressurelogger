@@ -1,5 +1,5 @@
 from __future__ import annotations
-import json, math, os, sys, time, queue, threading
+import json, math, os, sys, time, queue, threading, ctypes
 from pathlib import Path
 from collections import deque
 import tkinter as tk
@@ -92,6 +92,15 @@ class App(tk.Tk):
         self.store=Store(DATA/'recordings.sqlite'); self.store.recover(); self.engine=Engine(self.store); self.engine.start()
         self.sid=None; self.detail_sid=None; self.connected=False; self.latest=None; self.connection_generation=0; self.connection_pending=False; self.connect_started=0; self.retired_engines=[]; self.simulation_recovery_attempted=False; self.connection_timed_out=False; self.buffer=deque(maxlen=14400); self.viewer_sid=None
         self.save_job=None; self.edit_loading=False; self.closing=False; self._shutdown_complete=False; self._tick_after_id=None; self.shutdown_warning_shown=False; self.last_plot=0; self.rec_count=0; self.rec_errors=0; self.pending=False; self.details_user_visible=True
+        # Keep Windows awake for unattended acquisition; let the display turn off.
+        # SetThreadExecutionState is thread-scoped and must be cleared on exit.
+        self.sleep_prevention_active=False
+        if os.name=='nt':
+            try:
+                flags=0x80000000 | 0x00000001  # ES_CONTINUOUS | ES_SYSTEM_REQUIRED
+                self.sleep_prevention_active=bool(ctypes.windll.kernel32.SetThreadExecutionState(flags))
+            except (AttributeError,OSError):
+                pass
         self.configure(bg=BG); style=ttk.Style(self); style.theme_use('clam')
         style.configure('.',font=(UI_FONT,10),background=BG,foreground=INK)
         style.configure('TFrame',background=BG)
@@ -1280,6 +1289,10 @@ class App(tk.Tk):
                 'Recording details could not be saved. Please retry.\n'+str(exc),parent=self)
             return
         self.closing=True
+        if self.sleep_prevention_active:
+            try:ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)  # ES_CONTINUOUS
+            except (AttributeError,OSError):pass
+            self.sleep_prevention_active=False
         if self._tick_after_id is not None:
             try:self.after_cancel(self._tick_after_id)
             except tk.TclError:pass
