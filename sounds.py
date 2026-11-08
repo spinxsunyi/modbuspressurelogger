@@ -85,7 +85,7 @@ class SoundManager:
             return
         import winsound
         winsound.PlaySound(
-            _render_wav(pattern), winsound.SND_MEMORY | winsound.SND_SYNC
+            _render_wav(pattern), winsound.SND_MEMORY
         )
 
     def set_enabled(self, enabled):
