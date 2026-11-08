@@ -112,3 +112,22 @@ def test_audio_backend_failure_does_not_crash_worker():
     assert called.wait(1)
     # The persistent worker remains available after playback failures.
     assert manager.worker.is_alive()
+
+
+def test_windows_backend_uses_supported_memory_flag(monkeypatch):
+    """Catch invalid winsound constants without requiring a Windows CI runner."""
+    import sys
+    import types
+    import sounds
+
+    calls = []
+    fake = types.SimpleNamespace(
+        SND_MEMORY=4,
+        PlaySound=lambda data, flags: calls.append((data, flags)),
+    )
+    monkeypatch.setattr(sounds.os, 'name', 'nt')
+    monkeypatch.setitem(sys.modules, 'winsound', fake)
+    SoundManager._windows_backend(PATTERNS['connected'])
+    assert len(calls) == 1
+    assert calls[0][0].startswith(b'RIFF')
+    assert calls[0][1] == fake.SND_MEMORY
