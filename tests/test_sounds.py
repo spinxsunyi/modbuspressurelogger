@@ -1,4 +1,4 @@
-"""Modern UI sound regression tests; no Windows or speakers required."""
+"""Glass Chime sound regression tests; no Windows or speakers required."""
 import io
 import threading
 import time
@@ -19,7 +19,7 @@ def test_all_eight_operational_sound_patterns_defined():
         assert pattern and all(duration > 0 and frequency >= 0 for frequency, duration in pattern)
 
 
-def test_modern_ui_wav_valid_and_distinct():
+def test_glass_chime_wav_valid_and_distinct():
     rendered = [_render_wav(PATTERNS[event]) for event in sorted(EXPECTED)]
     assert len(set(rendered)) == 8
     for sound in rendered:
@@ -131,3 +131,13 @@ def test_windows_backend_uses_supported_memory_flag(monkeypatch):
     assert len(calls) == 1
     assert calls[0][0].startswith(b'RIFF')
     assert calls[0][1] == fake.SND_MEMORY
+
+
+def test_connected_and_recording_start_have_distinct_audio_identity():
+    """Connection is a longer glass chime; record start is a short tactile cue."""
+    with wave.open(io.BytesIO(_render_wav(PATTERNS['connected'])), 'rb') as wav:
+        connected_duration = wav.getnframes() / wav.getframerate()
+    with wave.open(io.BytesIO(_render_wav(PATTERNS['recording_started'])), 'rb') as wav:
+        recording_duration = wav.getnframes() / wav.getframerate()
+    assert connected_duration > recording_duration + .25
+    assert _render_wav(PATTERNS['connected']) != _render_wav(PATTERNS['recording_started'])
