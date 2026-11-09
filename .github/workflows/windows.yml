@@ -12,7 +12,7 @@ jobs:
       - run: python -m pytest -q
       - name: Generate pressure gauge Windows icon
         run: python -c "from app_icon import export_windows_icon; export_windows_icon('assets/pressure_gauge.ico')"
-      - run: pyinstaller --noconfirm --clean --windowed --onedir --name DigitalPressureRecorder --icon assets/pressure_gauge.ico --collect-all matplotlib app.py
+      - run: pyinstaller --noconfirm --clean --windowed --onedir --name DigitalPressureRecorder --icon assets/pressure_gauge.ico --collect-all matplotlib --add-data "assets/pms970p.jpg;assets" app.py
       - run: Copy-Item README.md dist/DigitalPressureRecorder/
       - name: Package and verify portable ZIP
         shell: python
