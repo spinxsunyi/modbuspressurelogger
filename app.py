@@ -97,6 +97,7 @@ class App(tk.Tk):
         except (OSError,ValueError): pass
         try:self.settings['pressure_multiplier']=validated_pressure_multiplier(self.settings)
         except ValueError:self.settings['pressure_multiplier']=1
+        self.settings.setdefault('device_profile','auto_pms970' if all(self.settings.get(k)==v for k,v in {'baud':9600,'parity':'E','stopbits':2,'address':1}.items()) else 'manual')
         self.sounds=SoundManager(self.settings.get('sound_enabled',True))
         self.audio_link_healthy=False
         self.audio_connected_announced=False
@@ -1491,31 +1492,76 @@ class App(tk.Tk):
             9:'UTC+9 — WIT (Jayapura)',
             0:'UTC+0 — UTC (Universal Time)',
         }
-        choices={'mode':['Simulation','Modbus RTU'],'baud':[2400,4800,9600,19200],'parity':['E','N','O'],'stopbits':[1,2],'interval':[.5,1,.2,.1],'unit':['psi','bar','kPa','MPa'],'pressure_multiplier':['1','1000'],'utc_offset':list(self.utc_offset_labels.values())}
-        for n,k in enumerate(['mode','port','baud','parity','stopbits','address','interval','unit','utc_offset','pressure_multiplier']):
-            parent=grid if n<6 else display
-            row=n if n<6 else n-6
-            ttk.Label(parent,text={'utc_offset':'UTC offset','interval':'Interval (seconds)','baud':'Baud rate','stopbits':'Stop bits','pressure_multiplier':'Pressure multiplier (x)'}.get(k,k.title())).grid(row=row,column=0,sticky='w',padx=(0,12),pady=5)
-            initial=(self.utc_offset_labels.get(int(float(self.settings[k])),str(self.settings[k])) if k=='utc_offset' else str(self.settings[k]))
-            v=tk.StringVar(value=initial); self.config_vars[k]=v
-            if k=='port':
-                en=ttk.Combobox(parent,textvariable=v,state='readonly',width=30); self.port_combo=en
-            elif k in choices:en=ttk.Combobox(parent,textvariable=v,values=choices[k],state='readonly',width=30)
-            else:en=ttk.Entry(parent,textvariable=v,width=32)
-            if isinstance(en,ttk.Combobox):
-                en.configure(style='SettingsWhite.TCombobox' if k in ('mode','port','baud','interval','unit','utc_offset') else 'SettingsGrey.TCombobox')
-            elif k=='address':
-                en.configure(style='SettingsGrey.TEntry')
-            en.grid(row=row,column=1,sticky='ew',pady=4)
+        choices={'mode':['Simulation','Modbus RTU'],'baud':[2400,4800,9600,19200],
+                 'parity':['E','N','O'],'stopbits':[1,2],'interval':[.5,1,.2,.1],
+                 'unit':['psi','bar','kPa','MPa'],'pressure_multiplier':['1','1000'],
+                 'utc_offset':list(self.utc_offset_labels.values())}
+        self.config_vars={}
+        for key in ('mode','port','baud','parity','stopbits','address','interval','unit','utc_offset','pressure_multiplier'):
+            value=self.settings.get(key,DEFAULTS.get(key,''))
+            if key=='utc_offset':value=self.utc_offset_labels.get(int(float(value)),str(value))
+            self.config_vars[key]=tk.StringVar(value=str(value))
+        ttk.Label(grid,text='Mode').grid(row=0,column=0,sticky='w',padx=(0,12),pady=5)
+        mode_combo=ttk.Combobox(grid,textvariable=self.config_vars['mode'],values=choices['mode'],state='readonly',width=32,style='SettingsWhite.TCombobox')
+        mode_combo.grid(row=0,column=1,sticky='ew',pady=4)
+        ttk.Label(grid,text='Port').grid(row=1,column=0,sticky='w',padx=(0,12),pady=5)
+        self.port_combo=ttk.Combobox(grid,textvariable=self.config_vars['port'],state='readonly',width=32,style='SettingsWhite.TCombobox')
+        self.port_combo.grid(row=1,column=1,sticky='ew',pady=4)
         port_actions=ttk.Frame(grid)
         port_actions.grid(row=1,column=2,sticky='w',padx=10)
         ttk.Button(port_actions,text='Refresh ports',command=self.find_ports).pack(side='left')
         self.port_count=ttk.Label(port_actions)
         self.port_count.pack(side='left',padx=(8,0))
-        ttk.Label(grid,text='Recommended: 9600 baud',foreground='#576677').grid(row=2,column=2,sticky='w',padx=10)
+
+        ttk.Label(grid,text='Device configuration',font=(UI_FONT,10,'bold')).grid(row=2,column=0,columnspan=3,sticky='w',pady=(14,6))
+        cards=ttk.Frame(grid)
+        cards.grid(row=3,column=0,columnspan=3,sticky='ew')
+        cards.columnconfigure(0,weight=1,uniform='profiles')
+        cards.columnconfigure(1,weight=1,uniform='profiles')
+        self.device_profile=tk.StringVar(value=self.settings.get('device_profile','auto_pms970'))
+        auto_card=ttk.LabelFrame(cards,text='Auto (PMS-970)',padding=12)
+        auto_card.grid(row=0,column=0,sticky='nsew',padx=(0,7))
+        manual_card=ttk.LabelFrame(cards,text='Manual (Custom)',padding=12)
+        manual_card.grid(row=0,column=1,sticky='nsew',padx=(7,0))
+        ttk.Radiobutton(auto_card,text='Use PMS-970 preset',variable=self.device_profile,value='auto_pms970',
+                        command=self.update_device_profile).pack(anchor='w',pady=(0,5))
+        ttk.Label(auto_card,text='Recommended communication settings for Aplisens PMS-970.',
+                  wraplength=300,justify='left').pack(anchor='w',pady=(0,8))
+        # Render a small instrument illustration using the app's existing gauge artwork.
+        self.pms_profile_image=ImageTk.PhotoImage(gauge_image(94),master=self)
+        ttk.Label(auto_card,image=self.pms_profile_image).pack(anchor='w',pady=(0,6))
+        ttk.Label(auto_card,text='9600 baud  |  E (Even)  |  2 stop bits\nSlave address: 1',
+                  justify='left',font=(UI_FONT,10,'bold')).pack(anchor='w',pady=(0,5))
+        ttk.Label(auto_card,text='Preset profile; no device auto-detection.',foreground='#576677',
+                  wraplength=300).pack(anchor='w')
+        ttk.Radiobutton(manual_card,text='Configure communication manually',variable=self.device_profile,
+                        value='manual',command=self.update_device_profile).pack(anchor='w',pady=(0,7))
+        self.manual_profile_inputs=[]
+        for idx,key in enumerate(('baud','parity','stopbits','address')):
+            ttk.Label(manual_card,text={'baud':'Baud rate','parity':'Parity','stopbits':'Stop bits','address':'Address'}[key]).grid(row=idx+1,column=0,sticky='w',padx=(0,8),pady=5)
+            if key in choices:
+                widget=ttk.Combobox(manual_card,textvariable=self.config_vars[key],values=choices[key],
+                                    state='readonly',width=12,style='SettingsGrey.TCombobox')
+            else:
+                widget=ttk.Entry(manual_card,textvariable=self.config_vars[key],width=14,style='SettingsGrey.TEntry')
+            widget.grid(row=idx+1,column=1,sticky='ew',pady=5)
+            self.manual_profile_inputs.append(widget)
+        manual_card.columnconfigure(1,weight=1)
+        self.profile_cards=(auto_card,manual_card)
+        for row,key in enumerate(('interval','unit','utc_offset','pressure_multiplier')):
+            ttk.Label(display,text={'interval':'Interval (seconds)','unit':'Unit','utc_offset':'UTC offset',
+                                   'pressure_multiplier':'Pressure multiplier (x)'}[key]).grid(
+                                       row=row,column=0,sticky='w',padx=(0,12),pady=5)
+            ttk.Combobox(display,textvariable=self.config_vars[key],values=choices[key],
+                         state='readonly',width=30,style='SettingsWhite.TCombobox').grid(
+                             row=row,column=1,sticky='ew',pady=4)
         ttk.Label(display,text='Recommended: 0.5 s',foreground='#576677').grid(row=0,column=2,sticky='w',padx=10)
-        ttk.Label(display,text='0.5 s means one reading is requested every half-second. Actual sampling may be slower if communication is delayed.',foreground='#576677',wraplength=350,justify='left').grid(row=1,column=2,rowspan=2,sticky='nw',padx=10,pady=(4,0))
-        ttk.Label(display,text='x1 = normal; x1000 = corrected PSI after device decimal decoding. Verify against a trusted pressure reference before recording.',foreground='#a45300',wraplength=350,justify='left').grid(row=3,column=2,sticky='nw',padx=10,pady=(4,0))
+        ttk.Label(display,text='0.5 s means one reading is requested every half-second. Actual sampling may be slower if communication is delayed.',
+                  foreground='#576677',wraplength=350,justify='left').grid(row=1,column=2,rowspan=2,sticky='nw',padx=10,pady=(4,0))
+        ttk.Label(display,text='x1 = normal; x1000 = corrected PSI after device decimal decoding. Verify against a trusted pressure reference before recording.',
+                  foreground='#a45300',wraplength=350,justify='left').grid(row=3,column=2,sticky='nw',padx=10,pady=(4,0))
+        self.config_vars['mode'].trace_add('write',lambda *_:self.update_device_profile())
+        self.update_device_profile()
 
         self.sound_enabled=tk.BooleanVar(value=self.settings.get('sound_enabled',True))
         ttk.Checkbutton(actions,text='Enable operational sounds (mute / unmute)',variable=self.sound_enabled,
@@ -1680,12 +1726,27 @@ class App(tk.Tk):
         except OSError as exc:
             self.footer.config(text='Unable to persist sound preference: '+str(exc))
 
+    def update_device_profile(self):
+        """Enable custom serial controls only for Modbus manual mode."""
+        modbus=self.config_vars['mode'].get()=='Modbus RTU'
+        manual=self.device_profile.get()=='manual' and modbus
+        for widget in self.manual_profile_inputs:
+            widget.configure(state=('readonly' if isinstance(widget,ttk.Combobox) else 'normal') if manual else 'disabled')
+        self.port_combo.configure(state='readonly' if modbus else 'disabled')
+        for card in self.profile_cards:
+            for child in card.winfo_children():
+                if isinstance(child,ttk.Radiobutton):child.configure(state='normal' if modbus else 'disabled')
+
     def apply_settings(self):
         if self.sid or self.pending:messagebox.showinfo('Recording','Stop recording before changing settings.');return
         try:
             s={k:v.get() for k,v in self.config_vars.items()}
             s['port']=s['port'].split(' — ',1)[0]
-            for k in ['baud','stopbits','address']:s[k]=int(s[k])
+            s['device_profile']=self.device_profile.get()
+            if s['device_profile']=='auto_pms970' and s['mode']=='Modbus RTU':
+                s.update(baud=9600,parity='E',stopbits=2,address=1)
+            else:
+                for k in ['baud','stopbits','address']:s[k]=int(s[k])
             s['interval']=float(s['interval'])
             s['pressure_multiplier']=validated_pressure_multiplier(s)
             s['utc_offset']=next(offset for offset,label in self.utc_offset_labels.items() if label==s['utc_offset'])
@@ -1697,6 +1758,8 @@ class App(tk.Tk):
             tmp=DATA/'settings.tmp'; tmp.write_text(json.dumps(s,indent=2)); tmp.replace(DATA/'settings.json')
             old_unit=self.settings['unit']
             self.settings=s
+            for key in ('baud','parity','stopbits','address'):
+                self.config_vars[key].set(str(s[key]))
             self.scaling_indicator.config(text='Pressure correction: x'+str(s['pressure_multiplier']))
             self.update_simulate_disconnect_visibility()
             if old_unit!=s['unit']:
