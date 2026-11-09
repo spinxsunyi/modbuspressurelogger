@@ -103,6 +103,8 @@ class App(tk.Tk):
             self.settings['device_profile']=('manual' if existing_config and any(
                 self.settings.get(k)!=v for k,v in {'baud':9600,'parity':'E','stopbits':2,'address':1}.items()
             ) else 'auto_pms970')
+        if self.settings['device_profile']=='auto_pms970' and self.settings['mode']=='Modbus RTU':
+            self.settings.update(baud=9600,parity='E',stopbits=2,address=1)
         self.sounds=SoundManager(self.settings.get('sound_enabled',True))
         self.audio_link_healthy=False
         self.audio_connected_announced=False
