@@ -1,5 +1,5 @@
 from __future__ import annotations
-import json, math, os, sys, time, queue, threading, ctypes
+import json, math, os, sys, time, queue, threading, ctypes, io, urllib.request
 from pathlib import Path
 from collections import deque
 import tkinter as tk
@@ -15,7 +15,7 @@ from report_page import report_figure,report_figures,graph_figure,report_name,ap
 from app_icon import set_window_icon, gauge_image
 from chart_scale import (WINDOWS, apply_window_time_grid, apply_engineering_grid,
                          apply_pressure_grid, reduce_live_samples, validated_pressure_limits)
-from PIL import ImageTk
+from PIL import Image, ImageTk
 from sounds import SoundManager
 
 UI_FONT='Segoe UI' if os.name=='nt' else 'Helvetica'
@@ -1534,9 +1534,11 @@ class App(tk.Tk):
                         command=self.update_device_profile).pack(anchor='w',pady=(0,5))
         ttk.Label(auto_card,text='Recommended communication settings for Aplisens PMS-970.',
                   wraplength=300,justify='left').pack(anchor='w',pady=(0,8))
-        # Render a small instrument illustration using the app's existing gauge artwork.
+        # Manufacturer's PMS-970P product photograph. Cache for offline field use.
         self.pms_profile_image=ImageTk.PhotoImage(gauge_image(94),master=self)
-        ttk.Label(auto_card,image=self.pms_profile_image).pack(anchor='w',pady=(0,6))
+        self.pms_profile_label=ttk.Label(auto_card,image=self.pms_profile_image)
+        self.pms_profile_label.pack(anchor='w',pady=(0,6))
+        self.after(200,self.load_pms_profile_photo)
         ttk.Label(auto_card,text='9600 baud  |  E (Even)  |  2 stop bits\nSlave address: 1',
                   justify='left',font=(UI_FONT,10,'bold')).pack(anchor='w',pady=(0,5))
         ttk.Label(auto_card,text='Preset profile; no device auto-detection.',foreground='#576677',
@@ -1732,6 +1734,37 @@ class App(tk.Tk):
             tmp.replace(DATA/'settings.json')
         except OSError as exc:
             self.footer.config(text='Unable to persist sound preference: '+str(exc))
+
+    def load_pms_profile_photo(self):
+        """Use an official PMS-970P photo, cached for subsequent offline launches."""
+        cached=DATA/'pms970p_official.jpg'
+        url='https://aplisens.com/images/produkty/PMS-970P.jpg'
+        def display(path):
+            if not self.winfo_exists() or not self.pms_profile_label.winfo_exists():return
+            try:
+                with Image.open(path) as source:
+                    image=source.convert('RGB')
+                    image.thumbnail((190,115),Image.Resampling.LANCZOS)
+                    self.pms_profile_image=ImageTk.PhotoImage(image,master=self)
+                self.pms_profile_label.configure(image=self.pms_profile_image)
+            except (OSError,ValueError):pass
+        if cached.is_file():
+            display(cached)
+            return
+        def download():
+            try:
+                request=urllib.request.Request(url,headers={'User-Agent':'DigitalPressureRecorder/1.0'})
+                with urllib.request.urlopen(request,timeout=5) as response:
+                    data=response.read(2_000_001)
+                if len(data)>2_000_000: return
+                with Image.open(io.BytesIO(data)) as check:
+                    check.verify()
+                temp=cached.with_suffix('.tmp')
+                temp.write_bytes(data)
+                temp.replace(cached)
+                self.after(0,lambda:display(cached))
+            except (OSError,ValueError,RuntimeError):pass
+        threading.Thread(target=download,daemon=True).start()
 
     def update_device_profile(self):
         """Enable custom serial controls only for Modbus manual mode."""
