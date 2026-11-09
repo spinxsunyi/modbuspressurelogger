@@ -192,3 +192,21 @@ def test_excel_embedded_chart_uses_engineering_major_and_minor_grid(tmp_path):
     assert isinstance(ax.yaxis.get_minor_locator(),MultipleLocator)
     assert any(math.isclose(t,10,abs_tol=1e-6) for t in ax.xaxis.get_majorticklocs())
     assert any(math.isclose(t,2,abs_tol=1e-6) for t in ax.xaxis.get_minorticklocs())
+
+
+def test_tiny_pressure_ticks_are_distinct():
+    from chart_scale import apply_pressure_grid
+    from matplotlib.figure import Figure
+    f=Figure();ax=f.add_subplot(111)
+    ax.set_ylim(1.7,1.8)
+    step=apply_pressure_grid(ax,1.7,1.8)
+    formatter=ax.yaxis.get_major_formatter()
+    assert formatter(1.72,0)!=formatter(1.74,0)
+    assert ax.get_ylim()==pytest.approx((1.7,1.8))
+
+
+def test_pressure_scale_rejects_invalid_and_tiny_spans():
+    from chart_scale import validated_pressure_limits
+    for lo,hi in [(1,1),(2,1),(float('nan'),2),(1,float('inf')),(1797,1797+1e-9)]:
+        with pytest.raises(ValueError):validated_pressure_limits(lo,hi)
+    assert validated_pressure_limits(1700,1800)==(1700,1800)

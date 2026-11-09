@@ -226,3 +226,33 @@ def test_continuous_50_minute_recording_has_expected_minute_sheets(tmp_path):
             expected_minutes=list(range(0,50,step))
             assert elapsed_minutes==pytest.approx(expected_minutes)
             assert pressures==pytest.approx([1000+minute*12 for minute in expected_minutes])
+
+
+def test_explicit_pressure_multiplier_and_backward_compatibility():
+    from core import DEFAULTS, corrected_pressure, validated_pressure_multiplier, decode
+    assert DEFAULTS['pressure_multiplier']==1
+    assert validated_pressure_multiplier({})==1
+    assert corrected_pressure(1.797,{'pressure_multiplier':1000})==1797
+    assert corrected_pressure(1797,{'pressure_multiplier':1})==1797
+    assert corrected_pressure(None,{'pressure_multiplier':1000}) is None
+    assert decode((1797,1<<12))[0]==1.797
+    for invalid in (0,10,-1,1000000,'bogus'):
+        with pytest.raises(ValueError):validated_pressure_multiplier({'pressure_multiplier':invalid})
+
+
+def test_engine_applies_correction_once_to_recorded_samples(tmp_path):
+    from core import Engine, Store, DEFAULTS
+    st=Store(tmp_path/'multiplier.sqlite')
+    e=Engine(st)
+    class FakeSource:
+        def read(self):return (1.797,'OK',1797,1<<12)
+    e.source=FakeSource()
+    e.settings={**DEFAULTS,'pressure_multiplier':1000}
+    e.sid=st.start(e.settings)
+    e.deadline=time.monotonic()
+    e.poll()
+    rows=st.plot_rows(e.sid)
+    assert len(rows)==1
+    assert rows[0]['value']==1797
+    assert json.loads(st.get(e.sid)['settings'])['pressure_multiplier']==1000
+    assert st.plot_rows(e.sid)[0]['value']==1797
