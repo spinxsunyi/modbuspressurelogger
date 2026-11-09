@@ -14,7 +14,7 @@ if exist "dist\DigitalPressureRecorder" goto fail
 
 .venv\Scripts\python -c "from app_icon import export_windows_icon; export_windows_icon('assets/pressure_gauge.ico')"
 if errorlevel 1 goto fail
-.venv\Scripts\python -m PyInstaller --noconfirm --clean --windowed --onedir --name DigitalPressureRecorder --icon assets/pressure_gauge.ico --collect-all matplotlib app.py
+.venv\Scripts\python -m PyInstaller --noconfirm --clean --windowed --onedir --name DigitalPressureRecorder --icon assets/pressure_gauge.ico --collect-all matplotlib --add-data "assets/pms970p.jpg;assets" app.py
 if errorlevel 1 goto fail
 
 copy /Y README.md "dist\DigitalPressureRecorder\README.md"
