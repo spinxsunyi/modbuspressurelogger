@@ -74,7 +74,7 @@ def pressure_tick_decimals(step):
     """Use enough digits to distinguish neighboring ticks at the current spacing."""
     if not math.isfinite(step) or step <= 0:
         raise ValueError('Invalid pressure tick interval')
-    return min(9,max(0,-math.floor(math.log10(step))))
+    return min(9,max(0,-math.floor(math.log10(step)) + (1 if step / 10**math.floor(math.log10(step)) < 1.5 else 0)))
 
 
 def set_pressure_tick_formatter(ax, step, unit='psi', raw_psi=False):

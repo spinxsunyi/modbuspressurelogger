@@ -2181,8 +2181,10 @@ class App(tk.Tk):
                 self.lax.set_autoscaley_on(self.live_auto.get());self.lax.relim();self.lax.autoscale_view(scaley=self.live_auto.get());self.lax.set_xlim(max(self.live_window_origin if self.live_window_origin is not None else rows[0]['ts'],end-seconds),max(self.live_window_origin if self.live_window_origin is not None else rows[0]['ts'],end-seconds)+seconds if seconds<1e19 else max(end,rows[0]['ts']+1))
             try:apply_pressure_grid(self.lax,*self.lax.get_ylim(),unit=self.settings['unit'],raw_psi=True)
             except ValueError:
-                self.lax.set_ylim(0,3000)
-                apply_pressure_grid(self.lax,0,3000,unit=self.settings['unit'],raw_psi=True)
+                # Keep current bounds on a bad auto range instead of crashing the periodic UI tick.
+                if self.live_auto.get():
+                    self.lax.set_ylim(0,3000)
+                    apply_pressure_grid(self.lax,0,3000,unit=self.settings['unit'],raw_psi=True)
             self.lcanvas.draw_idle()
         self._check_connection_watchdog()
         self._check_modbus_timeout()
