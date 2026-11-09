@@ -97,7 +97,12 @@ class App(tk.Tk):
         except (OSError,ValueError): pass
         try:self.settings['pressure_multiplier']=validated_pressure_multiplier(self.settings)
         except ValueError:self.settings['pressure_multiplier']=1
-        self.settings.setdefault('device_profile','auto_pms970' if all(self.settings.get(k)==v for k,v in {'baud':9600,'parity':'E','stopbits':2,'address':1}.items()) else 'manual')
+        # New installs use the PMS-970 preset; legacy custom serial settings remain manual.
+        if 'device_profile' not in self.settings:
+            existing_config=(DATA/'settings.json').exists()
+            self.settings['device_profile']=('manual' if existing_config and any(
+                self.settings.get(k)!=v for k,v in {'baud':9600,'parity':'E','stopbits':2,'address':1}.items()
+            ) else 'auto_pms970')
         self.sounds=SoundManager(self.settings.get('sound_enabled',True))
         self.audio_link_healthy=False
         self.audio_connected_announced=False
@@ -1535,7 +1540,7 @@ class App(tk.Tk):
         ttk.Label(auto_card,text='Preset profile; no device auto-detection.',foreground='#576677',
                   wraplength=300).pack(anchor='w')
         ttk.Radiobutton(manual_card,text='Configure communication manually',variable=self.device_profile,
-                        value='manual',command=self.update_device_profile).pack(anchor='w',pady=(0,7))
+                        value='manual',command=self.update_device_profile).grid(row=0,column=0,columnspan=2,sticky='w',pady=(0,7))
         self.manual_profile_inputs=[]
         for idx,key in enumerate(('baud','parity','stopbits','address')):
             ttk.Label(manual_card,text={'baud':'Baud rate','parity':'Parity','stopbits':'Stop bits','address':'Address'}[key]).grid(row=idx+1,column=0,sticky='w',padx=(0,8),pady=5)
