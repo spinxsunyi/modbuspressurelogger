@@ -3,11 +3,11 @@ from __future__ import annotations
 import json, math, random, sqlite3, threading, queue, time, uuid
 from contextlib import contextmanager
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime
 from dataclasses import dataclass
 
 DEFAULTS = dict(mode='Modbus RTU', port='', baud=9600, parity='E', stopbits=1,
-                address=1, interval=.5, unit='psi', pressure_multiplier=1, utc_offset=8, auto_connect=True)
+                address=1, interval=.5, unit='psi', pressure_multiplier=1, auto_connect=True)
 FIELDS = ['well', 'job', 'job_id', 'engineer', 'client', 'location', 'job_date', 'notes']
 
 def validated_pressure_multiplier(settings):
@@ -100,7 +100,7 @@ class Store:
     def start(self, settings, ts=None):
         ts = time.time() if ts is None else ts
         sid=uuid.uuid4().hex
-        name=datetime.fromtimestamp(ts,timezone.utc).strftime('REC_%Y-%m-%d_%H%M%S_UTC')+'_'+sid[:4]
+        name=datetime.fromtimestamp(ts).strftime('REC_%Y-%m-%d_%H%M%S')+'_'+sid[:4]
         details={k:'' for k in FIELDS}; details['job_date']=datetime.now().strftime('%Y-%m-%d')
         with self.connect() as c:
             c.execute('INSERT INTO sessions(id,name,started,state,mode,unit,settings,details) VALUES(?,?,?,?,?,?,?,?)',
