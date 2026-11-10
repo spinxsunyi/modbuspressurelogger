@@ -1,13 +1,14 @@
 """Snapshot-based exports. Original sample rows are streamed, not resampled."""
 import csv, json, io, math, time
 from app_icon import gauge_image
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
 from pathlib import Path
 from matplotlib.figure import Figure
 from chart_scale import apply_report_time_scale, apply_pressure_grid, apply_engineering_grid
 
-def stamp(ts,offset=8):
-    return datetime.fromtimestamp(ts,timezone(timedelta(hours=float(offset)))).isoformat(timespec='milliseconds')
+def stamp(ts,offset=None):
+    """Return computer-local wall time (legacy offset argument ignored)."""
+    return datetime.fromtimestamp(ts).isoformat(timespec='milliseconds')
 
 def figure(rows,events,session,view):
     fig=Figure(figsize=(11,5),dpi=120); ax=fig.add_subplot(111)
@@ -105,7 +106,7 @@ def export(store,sid,path,view,selected=False,resolution=None):
                           'Selected from':stamp(lo if selected else session['started'],offset),
                           'Selected to':stamp(hi if selected else (session['ended'] or time.time()),offset),'Data sheets':'All Data; 1 Second; 1 Minute; 10 Minutes',
                           'Recording acquisition interval (configured)':str(settings.get('interval','Unknown'))+' s',
-                          'Timestamp timezone':f'UTC{float(offset):+g}',
+                          'Timestamp timezone':'Computer local time',
                           'Data treatment':'All Data: original samples; other sheets: downsampled original samples (no averaging or interpolation)',
                           'Recording minimum (psi)':extrema[0],'Recording maximum (psi)':extrema[1]}
                     for n,(key,value) in enumerate(meta.items(),6):
@@ -144,7 +145,7 @@ def export(store,sid,path,view,selected=False,resolution=None):
                     ev.write_row(0,0,['timestamp','label','kind'],table_header)
                     ev.freeze_panes(1,0)
                     for n,e in enumerate(events,1):
-                        ev.write_datetime(n,0,datetime.fromtimestamp(e['ts'],timezone(timedelta(hours=float(offset)))).replace(tzinfo=None),excel_datetime)
+                        ev.write_datetime(n,0,datetime.fromtimestamp(e['ts']),excel_datetime)
                         ev.write_row(n,1,[e['label'],e['kind']])
                     rows=[r for r in store.plot_rows(sid) if lo<=r['ts']<=hi]
                     fig=figure(rows,events,session,view);image=io.BytesIO();fig.savefig(image,format='png');image.seek(0)
