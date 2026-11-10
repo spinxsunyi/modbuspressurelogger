@@ -253,7 +253,7 @@ def full_size_chart_figure(store, sid, unit='psi', time_range=None,
     chart_to=time_range[1] if time_range is not None else (rows[-1]['ts'] if rows else (session['ended'] or session['started']))
     def readable_chart_timestamp(ts):
         local=datetime.fromisoformat(stamp(ts,offset))
-        return f"{local.strftime('%d %b %Y, %H:%M:%S')} UTC{local.strftime('%z')[:3]}:{local.strftime('%z')[3:]}"
+        return f"{local.strftime('%d %b %Y, %H:%M:%S')} (Computer local time)"
     label(.955,.879,f'From: {readable_chart_timestamp(chart_from)}',8,color=gray,ha='right')
     label(.955,.860,f'To: {readable_chart_timestamp(chart_to)}',8,color=gray,ha='right')
     ax=fig.add_axes([.09,.145,.855,.690])
@@ -313,7 +313,7 @@ def graph_figure(store,sid,unit='psi',time_range=None,time_axis='Elapsed Time',s
 
 def configure_time_axis(ax,start,offset,mode):
     if mode=='Date & Time':
-        ax.set_xlabel('Date & time (UTC%+g)' % float(offset))
+        ax.set_xlabel('Date & time (Computer local time)')
         ax.xaxis.set_major_formatter(FuncFormatter(
             lambda x,pos:datetime.fromisoformat(stamp(start+x*60,offset)).strftime('%d %b\n%H:%M:%S')))
     else:
