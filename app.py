@@ -1124,6 +1124,10 @@ class App(tk.Tk):
                 self.report_drag_hint.pack_forget()
         if getattr(self,'report_range_canvas',None):
             self.report_range_selector.set_active(custom and not self.report_pan_mode.get())
+            if not custom:
+                # Clear the SpanSelector's own selection overlay, not just our shading.
+                self.report_range_selector.clear()
+            self.report_range_selector.set_visible(custom)
             self.report_range_shade.set_visible(custom)
             self.report_excluded_left.set_visible(custom)
             self.report_excluded_right.set_visible(custom)
