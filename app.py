@@ -556,7 +556,7 @@ class App(tk.Tk):
             duration_text=f'{minutes}m {seconds:02d}s'
             self.history.insert('','end',iid=session['id'],
                 tags=('alternate',) if index%2 else (),
-                values=(stamp(session['started'],self.settings['utc_offset'])[:19].replace('T',' '),
+                values=(stamp(session['started'],None)[:19].replace('T',' '),
                         details.get('well') or session['name'],
                         details.get('job') or '—',
                         details.get('engineer') or '—',
@@ -1299,9 +1299,8 @@ class App(tk.Tk):
 
     def parse_report_x_view(self,value):
         if self.report_axis.get()!='Date & Time':return float(value)
-        from datetime import datetime,timezone,timedelta
+        from datetime import datetime
         dt=datetime.strptime(value.strip(),'%Y-%m-%d %H:%M:%S')
-        dt=dt.replace(tzinfo=timezone(timedelta(hours=float(self.report_graph_offset))))
         return max(0.0,min(self.report_range_duration,(dt.timestamp()-self.report_graph_start)/60))
 
     def set_report_x_view_fields(self,lo,hi):
@@ -1333,7 +1332,7 @@ class App(tk.Tk):
             self.report_xfrom_label.configure(text='View X from (date/time)')
             ax.xaxis.set_major_formatter(FuncFormatter(
                 lambda x,pos:__import__('datetime').datetime.fromisoformat(stamp(self.report_graph_start+x*60,self.report_graph_offset)).strftime('%d %b\n%H:%M:%S')))
-            ax.set_xlabel('Date & time (UTC%+g)' % float(self.report_graph_offset))
+            ax.set_xlabel('Date & time (Computer local time)')
         else:
             self.report_xfrom_label.configure(text='View X from (min)')
             ax.xaxis.set_major_formatter(FuncFormatter(lambda x,pos:f'{x:g}'))
@@ -1493,20 +1492,12 @@ class App(tk.Tk):
         self.settings_device=grid;self.settings_display=display;self.settings_actions=actions
         grid.columnconfigure(1,weight=1);display.columnconfigure(1,weight=1)
         self.config_vars={}
-        self.utc_offset_labels={
-            7:'UTC+7 — WIB (Jakarta)',
-            8:'UTC+8 — WITA (Balikpapan)',
-            9:'UTC+9 — WIT (Jayapura)',
-            0:'UTC+0 — UTC (Universal Time)',
-        }
         choices={'mode':['Simulation','Modbus RTU'],'baud':[2400,4800,9600,19200],
                  'parity':['E','N','O'],'stopbits':[1,2],'interval':[.5,1,.2,.1],
-                 'unit':['psi','bar','kPa','MPa'],'pressure_multiplier':['1','1000'],
-                 'utc_offset':list(self.utc_offset_labels.values())}
+                 'unit':['psi','bar','kPa','MPa'],'pressure_multiplier':['1','1000']}
         self.config_vars={}
-        for key in ('mode','port','baud','parity','stopbits','address','interval','unit','utc_offset','pressure_multiplier'):
+        for key in ('mode','port','baud','parity','stopbits','address','interval','unit','pressure_multiplier'):
             value=self.settings.get(key,DEFAULTS.get(key,''))
-            if key=='utc_offset':value=self.utc_offset_labels.get(int(float(value)),str(value))
             self.config_vars[key]=tk.StringVar(value=str(value))
         ttk.Label(grid,text='Mode').grid(row=0,column=0,sticky='w',padx=(0,12),pady=5)
         mode_combo=ttk.Combobox(grid,textvariable=self.config_vars['mode'],values=choices['mode'],state='readonly',width=32,style='SettingsWhite.TCombobox')
@@ -1563,8 +1554,8 @@ class App(tk.Tk):
             self.manual_profile_inputs.append(widget)
         manual_card.columnconfigure(1,weight=1)
         self.profile_cards=(auto_card,manual_card)
-        for row,key in enumerate(('interval','unit','utc_offset','pressure_multiplier')):
-            ttk.Label(display,text={'interval':'Interval (seconds)','unit':'Unit','utc_offset':'UTC offset',
+        for row,key in enumerate(('interval','unit','pressure_multiplier')):
+            ttk.Label(display,text={'interval':'Interval (seconds)','unit':'Unit',
                                    'pressure_multiplier':'Pressure multiplier (x)'}[key]).grid(
                                        row=row,column=0,sticky='w',padx=(0,12),pady=5)
             ttk.Combobox(display,textvariable=self.config_vars[key],values=choices[key],
@@ -1657,7 +1648,7 @@ class App(tk.Tk):
             ('Event Annotations','Mark important operational events during recording to provide context when reviewing pressure trends.'),
             ('Recording History & Analysis','Review previously recorded sessions with interactive graphs, zoom and pan controls, pressure statistics, and event markers.'),
             ('Reporting','Generate reports from recorded pressure data for documentation and operational review.'),
-            ('Device Configuration','Configure serial port, baud rate, Modbus parameters, sampling interval, display units, and UTC offset.'),
+            ('Device Configuration','Configure serial port, baud rate, Modbus parameters, sampling interval, display units, and computer-local timestamps.'),
             ('Simulation Mode','Test the monitoring and recording workflow without connecting physical hardware.'),
         ]
         feature_icons=['activity','database','flag','chart','file','sliders','flask']
@@ -1764,7 +1755,6 @@ class App(tk.Tk):
                 for k in ['baud','stopbits','address']:s[k]=int(s[k])
             s['interval']=float(s['interval'])
             s['pressure_multiplier']=validated_pressure_multiplier(s)
-            s['utc_offset']=next(offset for offset,label in self.utc_offset_labels.items() if label==s['utc_offset'])
             if not 1<=s['address']<=247:raise ValueError('Slave address must be 1-247')
             if s['mode']=='Modbus RTU' and not s['port']:raise ValueError('Specify a COM port')
             s['auto_connect']=self.auto.get()
@@ -1936,7 +1926,7 @@ class App(tk.Tk):
             if self.viewer_time_display.get()=='Elapsed time':
                 seconds=int(round(x*60))
                 return f'{seconds//60:02}:{seconds%60:02}'
-            return stamp(start+x*60,self.settings['utc_offset'])[11:19]
+            return stamp(start+x*60,None)[11:19]
         ax.xaxis.set_major_formatter(FuncFormatter(time_label))
         ax.tick_params(axis='x',labelrotation=0)
         ax.set(xlabel='Elapsed time (mm:ss)' if self.viewer_time_display.get()=='Elapsed time' else 'Date & time',
@@ -1946,15 +1936,15 @@ class App(tk.Tk):
         apply_pressure_grid(ax,v['ymin'],v['ymax'],unit=self.settings['unit'],raw_psi=True)
         apply_engineering_grid(ax)
         if self.viewer_time_display.get()=='Date & time':
-            from datetime import datetime,timezone,timedelta
-            date=datetime.fromtimestamp(start+v['xmin']*60,timezone(timedelta(hours=self.settings['utc_offset']))).strftime('%d %b %Y')
-            ax.set_xlabel(date+'  |  UTC'+f'{self.settings["utc_offset"]:+g}')
+            from datetime import datetime
+            date=datetime.fromtimestamp(start+v['xmin']*60).strftime('%d %b %Y')
+            ax.set_xlabel(date+'  |  Computer local time')
         for i in self.events_tree.get_children():self.events_tree.delete(i)
         for e in self.vevents:
             x=(e['ts']-start)/60; ax.axvline(x,ls='--',lw=.7,color='#bd7b1c')
             annotation=ax.annotate(e['label'] if self.history_labels.get() else '',(x,.95),xycoords=('data','axes fraction'),rotation=0,va='top',fontsize=8,bbox=dict(facecolor='#fff0b6',edgecolor='#d6ad45',pad=2),clip_on=True); annotation.draggable()
             pressure=self.annotation_pressure(self.viewer_sid,e['ts'])
-            self.events_tree.insert('','end',iid=str(e['id']),values=(stamp(e['ts'],self.settings['utc_offset'])[11:19],e['label'],e['kind'],pressure))
+            self.events_tree.insert('','end',iid=str(e['id']),values=(stamp(e['ts'],None)[11:19],e['label'],e['kind'],pressure))
         self.vcanvas.draw_idle()
     def apply_view(self):
         try:v=self.view_values();self.store.update(self.viewer_sid,'view',v);self.viewer_scale_mode.set('Manual');self.paint_viewer();self.footer.config(text='Viewer configuration saved')
@@ -1976,8 +1966,8 @@ class App(tk.Tk):
                 'max':'—' if hi is None else f'{from_psi(hi,self.settings["unit"]):,.2f} {self.settings["unit"]}',
                 'first_pressure':'—' if first is None else f'{from_psi(first["value"],self.settings["unit"]):,.2f} {self.settings["unit"]}',
                 'last_pressure':'—' if last is None else f'{from_psi(last["value"],self.settings["unit"]):,.2f} {self.settings["unit"]}',
-                'start':stamp(begin,self.settings['utc_offset'])[11:19],
-                'stop':stamp(stop,self.settings['utc_offset'])[11:19] if stop else '—',
+                'start':stamp(begin,None)[11:19],
+                'stop':stamp(stop,None)[11:19] if stop else '—',
                 'duration':f'{elapsed//60}m {elapsed%60:02}s'}
         for name,value in values.items():self.viewer_summary_vars[name].set(value)
 
@@ -2041,7 +2031,7 @@ class App(tk.Tk):
             if not self.vsession['started']<=ts<=last:
                 raise ValueError('Choose a time within the recording.')
             label=simpledialog.askstring('Review annotation',
-                                         'Label for '+stamp(ts,self.settings['utc_offset'])[11:19]+':',
+                                         'Label for '+stamp(ts,None)[11:19]+':',
                                          parent=self)
             if label and label.strip():
                 self.store.event(self.viewer_sid,ts,label.strip(),'Review')
@@ -2053,7 +2043,7 @@ class App(tk.Tk):
         if not selected or not self.viewer_sid:return
         event=next((e for e in self.vevents if str(e['id'])==selected[0]),None)
         if event is None:return
-        when=stamp(event['ts'],self.settings['utc_offset'])[11:19]
+        when=stamp(event['ts'],None)[11:19]
         if not messagebox.askyesno('Delete annotation',
                 f'Delete annotation "{event["label"]}" at {when}?\n\n'
                 'This cannot be undone.',icon='warning',parent=self):
@@ -2195,7 +2185,7 @@ class App(tk.Tk):
                     self.connection_timed_out=False
                     self.connect_btn.config(state='normal')
                     if s['quality']=='OK':self.value.config(text=f"{from_psi(s['value'],self.settings['unit']):,.3f}".rstrip('0').rstrip('.')+f" {self.settings['unit']}")
-                    self.reading_status.config(text=f"{self.settings['mode'].upper()}  |  {s['quality']}  |  {stamp(s['ts'],self.settings['utc_offset'])[11:23]}",fg='#008b92' if s['quality']=='OK' else '#b45309')
+                    self.reading_status.config(text=f"{self.settings['mode'].upper()}  |  {s['quality']}  |  {stamp(s['ts'],None)[11:23]}",fg='#008b92' if s['quality']=='OK' else '#b45309')
                     if d['sid']:self.rec_count+=1;self.rec_errors+=s['quality']!='OK'
                 elif kind=='connected':
                     self.live_window_origin=None
@@ -2250,11 +2240,11 @@ class App(tk.Tk):
             apply_window_time_grid(self.lax,self.window.get(),units='seconds')
             display_rows=reduce_live_samples(rows)
             self.line.set_data([r['ts'] for r in display_rows],[r['value'] if r['quality']=='OK' else math.nan for r in display_rows]);self.lax.set_ylabel('Pressure ('+self.settings['unit']+')')
-            self.lax.xaxis.set_major_formatter(FuncFormatter(lambda x,pos:stamp(x,self.settings['utc_offset'])[11:19]))
+            self.lax.xaxis.set_major_formatter(FuncFormatter(lambda x,pos:stamp(x,None)[11:19]))
             self.lax.tick_params(axis='x',labelrotation=0)
-            from datetime import datetime,timezone,timedelta
-            date=datetime.fromtimestamp(end,timezone(timedelta(hours=self.settings['utc_offset']))).strftime('%d %b %Y')
-            self.lax.set_xlabel(date+'  |  UTC'+f'{self.settings["utc_offset"]:+g}')
+            from datetime import datetime
+            date=datetime.fromtimestamp(end).strftime('%d %b %Y')
+            self.lax.set_xlabel(date+'  |  Computer local time')
             if self.follow.get():
                 self.lax.set_autoscaley_on(self.live_auto.get());self.lax.relim();self.lax.autoscale_view(scaley=self.live_auto.get());self.lax.set_xlim(max(self.live_window_origin if self.live_window_origin is not None else rows[0]['ts'],end-seconds),max(self.live_window_origin if self.live_window_origin is not None else rows[0]['ts'],end-seconds)+seconds if seconds<1e19 else max(end,rows[0]['ts']+1))
             try:apply_pressure_grid(self.lax,*self.lax.get_ylim(),unit=self.settings['unit'],raw_psi=True)
@@ -2553,7 +2543,7 @@ class App(tk.Tk):
         target=base+event.xdata*60 if history else event.xdata
         def xpos(ts):return (ts-base)/60 if history else ts
         near=next((e for e in events if abs(ax.transData.transform((xpos(e['ts']),0))[0]-event.x)<8),None)
-        if near:text=stamp(near['ts'],self.settings['utc_offset'])+'\n'+near['label'];x=event.xdata;y=event.ydata
+        if near:text=stamp(near['ts'],None)+'\n'+near['label'];x=event.xdata;y=event.ydata
         else:
             if history:
                 if not self.viewer_sid:return
@@ -2564,7 +2554,7 @@ class App(tk.Tk):
             row=min(rows,key=lambda r:abs(r['ts']-target));x=xpos(row['ts']);y=row['value']
             if row['quality']!='OK' or y is None:canvas.draw_idle();return
             unit=self.settings['unit']
-            text=f"Time: {stamp(row['ts'],self.settings['utc_offset'])[11:23]}\nPressure: {from_psi(y,unit):,.2f} {unit}\nQuality: {row['quality']}"
+            text=f"Time: {stamp(row['ts'],None)[11:23]}\nPressure: {from_psi(y,unit):,.2f} {unit}\nQuality: {row['quality']}"
         if not near:
             marker,=ax.plot([x],[y],'o',color='#008b86',ms=5)
             guide=ax.axvline(x,color='#66798a',ls='--',lw=.7)
@@ -2584,10 +2574,10 @@ class App(tk.Tk):
         if time.monotonic()-self.enhanced_last<1:return
         self.enhanced_last=time.monotonic()
         if self.page=='Live Monitor' and self.buffer:
-            self.live_slider.show_range(list(self.buffer),*self.lax.get_xlim(),self.settings['utc_offset'])
+            self.live_slider.show_range(list(self.buffer),*self.lax.get_xlim(),None)
         if self.page=='Viewer' and self.viewer_sid:
             bounds=[self.vsession['started']+m*60 for m in self.vax.get_xlim()]
-            self.history_slider.show_range(self.vrows,*bounds,self.settings['utc_offset'])
+            self.history_slider.show_range(self.vrows,*bounds,None)
         if self.last_recording:
             lo,hi=self.recording_extrema(self.last_recording)
             for label,value in zip(self.metric,(lo,hi)):
@@ -2621,7 +2611,7 @@ class App(tk.Tk):
         if not events and 'empty' not in existing:
             self.live_events.insert('','end',iid='empty',values=('','No events yet',''))
         for e in events:
-            key=str(e['id']);values=(stamp(e['ts'],self.settings['utc_offset'])[11:23],e['label'],self.annotation_pressure(self.last_recording,e['ts']))
+            key=str(e['id']);values=(stamp(e['ts'],None)[11:23],e['label'],self.annotation_pressure(self.last_recording,e['ts']))
             if key in existing:self.live_events.item(key,values=values)
             else:self.live_events.insert('','end',iid=key,values=values)
         self.update_live_event_toggle()
