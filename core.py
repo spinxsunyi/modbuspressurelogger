@@ -3,12 +3,30 @@ from __future__ import annotations
 import json, math, random, sqlite3, threading, queue, time, uuid
 from contextlib import contextmanager
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime
 from dataclasses import dataclass
 
-DEFAULTS = dict(mode='Simulation', port='', baud=19200, parity='E', stopbits=1,
-                address=1, interval=.5, unit='psi', utc_offset=8, auto_connect=True)
+DEFAULTS = dict(mode='Modbus RTU', port='', baud=9600, parity='E', stopbits=1,
+                address=1, interval=.5, unit='psi', pressure_multiplier=1, auto_connect=True)
 FIELDS = ['well', 'job', 'job_id', 'engineer', 'client', 'location', 'job_date', 'notes']
+
+def validated_pressure_multiplier(settings):
+    """Return the explicitly selected instrument correction; never infer it from decimals."""
+    value = settings.get('pressure_multiplier', 1)
+    if str(value) not in ('1', '1000'):
+        raise ValueError('Pressure multiplier must be x1 or x1000')
+    return int(value)
+
+
+def corrected_pressure(value, settings):
+    """Correct decoded PSI exactly once before samples enter storage or the UI."""
+    if value is None:
+        return None
+    result = value * validated_pressure_multiplier(settings)
+    if not math.isfinite(result):
+        raise ValueError('Corrected pressure must be finite')
+    return result
+
 
 def decode(registers):
     if len(registers) != 2: raise ValueError('Expected readout and status registers')
@@ -23,7 +41,7 @@ class Simulator:
     def read(self):
         if self.drop: raise TimeoutError('Simulated cable disconnected')
         t = (time.monotonic() - self.start) % 120
-        v = 2450 * (t/25 if t < 25 else 1 if t < 85 else max(0, 1-(t-85)/25))
+        v = 5000 * (t/25 if t < 25 else 1 if t < 85 else max(0, 1-(t-85)/25))
         return round(max(0,v+self.rng.uniform(-4,4)),1), 'OK', None, None
     def close(self): pass
 
@@ -65,6 +83,11 @@ class Store:
                 id INTEGER PRIMARY KEY, session TEXT, ts REAL, label TEXT, kind TEXT,
                 created REAL, modified REAL);
             ''')
+            # PMS-970 and the built-in simulator both produce PSI. Earlier app
+            # versions stored the selected display label in sessions.unit, while
+            # samples.value always contained unconverted PSI. Correct labels only;
+            # never rewrite pressure readings.
+            c.execute("UPDATE sessions SET unit='psi' WHERE unit IS NULL OR unit!='psi'")
     @contextmanager
     def connect(self):
         c = sqlite3.connect(self.path, timeout=5)
@@ -77,11 +100,11 @@ class Store:
     def start(self, settings, ts=None):
         ts = time.time() if ts is None else ts
         sid=uuid.uuid4().hex
-        name=datetime.fromtimestamp(ts,timezone.utc).strftime('REC_%Y-%m-%d_%H%M%S_UTC')+'_'+sid[:4]
+        name=datetime.fromtimestamp(ts).strftime('REC_%Y-%m-%d_%H%M%S')+'_'+sid[:4]
         details={k:'' for k in FIELDS}; details['job_date']=datetime.now().strftime('%Y-%m-%d')
         with self.connect() as c:
             c.execute('INSERT INTO sessions(id,name,started,state,mode,unit,settings,details) VALUES(?,?,?,?,?,?,?,?)',
-                (sid,name,ts,'Recording',settings['mode'],settings['unit'],json.dumps(settings),json.dumps(details)))
+                (sid,name,ts,'Recording',settings['mode'],'psi',json.dumps(settings),json.dumps(details)))
         return sid
     def finish(self,sid,state='Completed'):
         with self.connect() as c: c.execute('UPDATE sessions SET ended=?,state=? WHERE id=?',(time.time(),state,sid))
@@ -103,6 +126,24 @@ class Store:
                 (sid,ts,label,kind,time.time(),time.time())).lastrowid
     def edit_event(self,eid,ts,label):
         with self.connect() as c: c.execute('UPDATE events SET ts=?,label=?,modified=? WHERE id=?',(ts,label,time.time(),eid))
+    def delete_event(self,eid,sid):
+        """Delete one annotation belonging to the selected recording."""
+        with self.connect() as c:
+            result=c.execute('DELETE FROM events WHERE id=? AND session=?',(eid,sid))
+            return result.rowcount==1
+
+    def delete_session(self,sid):
+        """Atomically delete a completed session and its associated samples/events."""
+        with self.connect() as c:
+            row=c.execute('SELECT state FROM sessions WHERE id=?',(sid,)).fetchone()
+            if row is None:return False
+            if row['state']=='Recording':
+                raise ValueError('Cannot delete a recording while acquisition is active.')
+            c.execute('DELETE FROM samples WHERE session=?',(sid,))
+            c.execute('DELETE FROM events WHERE session=?',(sid,))
+            c.execute('DELETE FROM sessions WHERE id=?',(sid,))
+            return True
+
     def events(self,sid):
         with self.connect() as c: return [dict(r) for r in c.execute('SELECT * FROM events WHERE session=? ORDER BY ts',(sid,))]
     def stats(self,sid):
@@ -126,7 +167,7 @@ class Store:
 class Engine(threading.Thread):
     def __init__(self,store):
         super().__init__(daemon=True); self.store=store; self.commands=queue.Queue(); self.messages=queue.Queue()
-        self.source=None; self.sid=None; self.settings=dict(DEFAULTS); self.running=True; self.deadline=0; self.origin=0
+        self.source=None; self.sid=None; self.settings=dict(DEFAULTS); self.running=True; self.deadline=0; self.origin=0; self.generation=0; self.last_error=None
     def send(self,cmd,*args): self.commands.put((cmd,args))
     def emit(self,kind,**data): self.messages.put((kind,data))
     def run(self):
@@ -137,17 +178,24 @@ class Engine(threading.Thread):
             except queue.Empty: pass
             except Exception as e: self.emit('error',text=str(e))
             if self.running and self.source and time.monotonic()>=self.deadline: self.poll()
-        if self.source: self.source.close()
+        if self.source:
+            try: self.source.close()
+            except Exception as exc: self.emit('error',text=str(exc))
     def command(self,cmd,*args):
         if cmd=='connect':
             if self.sid: raise RuntimeError('Stop recording before changing connection')
             if self.source: self.source.close()
-            self.settings=dict(args[0]); self.source=Simulator(self.settings) if self.settings['mode']=='Simulation' else ModbusSource(self.settings)
-            self.deadline=time.monotonic(); self.origin=self.deadline; self.emit('connected',settings=self.settings)
+            self.source=None
+            self.generation=args[1] if len(args)>1 else self.generation+1
+            self.last_error=None
+            self.settings=dict(args[0]); validated_pressure_multiplier(self.settings)
+            self.source=Simulator(self.settings) if self.settings['mode']=='Simulation' else ModbusSource(self.settings)
+            self.deadline=time.monotonic(); self.origin=self.deadline
+            self.emit('connected',settings=self.settings,generation=self.generation)
         elif cmd=='disconnect':
             if self.sid: raise RuntimeError('Stop recording first')
             if self.source: self.source.close()
-            self.source=None; self.emit('disconnected')
+            self.source=None; self.generation+=1; self.emit('disconnected',generation=self.generation)
         elif cmd=='start':
             if not self.source or self.sid: raise RuntimeError('Connect first; only one recording can run')
             self.sid=self.store.start(self.settings); self.origin=time.monotonic(); self.emit('started',sid=self.sid)
@@ -162,7 +210,17 @@ class Engine(threading.Thread):
     def poll(self):
         began=time.monotonic()
         try: value,quality,raw,status=self.source.read()
-        except Exception as e: value,quality,raw,status=None,'TIMEOUT',None,None
+        except Exception as e:
+            value,quality,raw,status=None,'TIMEOUT',None,None
+            error=str(e)
+            if error!=self.last_error:self.emit('communication_error',text=error,generation=self.generation)
+            self.last_error=error
+        else:
+            self.last_error=None
+            try:
+                value=corrected_pressure(value,self.settings)
+            except ValueError as exc:
+                self.emit('error',text=str(exc));value=None;quality='INVALID'
         sample=dict(ts=time.time(),elapsed=time.monotonic()-self.origin,value=value,quality=quality,raw=raw,status=status,latency=time.monotonic()-began)
         if self.sid:
             try: self.store.add_sample(self.sid,sample)
@@ -171,6 +229,6 @@ class Engine(threading.Thread):
                 try: self.store.finish(sid,'Storage error')
                 except Exception: pass
                 self.emit('storage_error',text=str(e),sid=sid)
-        self.emit('sample',sample=sample,sid=self.sid)
+        self.emit('sample',sample=sample,sid=self.sid,generation=self.generation)
         step=float(self.settings['interval']); self.deadline+=step
         if self.deadline<time.monotonic(): self.deadline=time.monotonic()+step

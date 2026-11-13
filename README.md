@@ -1,45 +1,57 @@
-# PMS Logger
+# Digital Pressure Recorder
 
-Python/Tkinter prototype for reading the Aplisens PMS-970 pressure indication over USB–RS485 (Modbus RTU). It starts in SIMULATION mode and can be exercised without the meter.
+**A software by Eka Yudhi Pratama**  
+**Version 1.0 • November 2026**
 
-## Run from source
+A Windows desktop application for real-time pressure monitoring, recording, and analysis using industrial pressure transmitters via Modbus RTU.
 
-Requires Python 3.12 with Tk support.
+## Key features
 
-```powershell
-py -3.12 -m venv .venv
-.venv\\Scripts\\Activate.ps1
-python -m pip install -r requirements.txt
-python seed_demo.py  # optional: create demo sessions in data/recordings.sqlite
-python app.py
-```
+### Real-Time Pressure Monitoring
+View live pressure readings with a continuously updating graph, connection status, and configurable display units (psi, bar, kPa, MPa).
 
-On Windows, run `build_windows.bat` to create a portable `dist/PMSLogger` folder and ZIP. Building requires internet once. The target laptop does not need Python installed. The USB adapter may need its CH343 driver.
+### Pressure Data Recording
+Record pressure measurements into organized sessions, with a configurable acquisition interval. Recommended interval: 0.5 seconds.
 
-## App workflow
+### Event Annotations
+Mark important operational events during recording to provide context when reviewing pressure trends.
 
-- Live Monitor opens directly, connects to the virtual sensor by default, and plots readings.
-- Record starts a session with an automatic ID. Job details autosave while recording.
-- Add Event records the button-click time before asking for its label.
-- History and Viewer remain usable while an acquisition continues.
-- Viewer supports pan/zoom, manual axis limits, annotations, and CSV/XLSX/PDF/PNG export.
-- SQLite saves each sample. Failed readings are null quality-marked rows so graph gaps remain visible.
+### Recording History & Analysis
+Review previously recorded sessions with interactive graphs, zoom and pan controls, pressure statistics, and event markers.
 
-## PMS-970 profile
+### Reporting
+Generate reports from recorded pressure data for documentation and operational review.
 
-Read-only Modbus RTU FC03, holding-register wire address `0x0001`, count 2 (display value + status), slave ID and serial format configured in Settings. The decoder handles signed 16-bit values, decimal-position bits, underrange, overrange and busy flags. Profile comes from the supplied PMS-970 manual, EN.IO.PMS-970 rev. 01.A.002/2019.10, printed page 23.
+### Device Configuration
+Configure serial port, baud rate, Modbus parameters, sampling interval, display units, and UTC offset.
 
-Hardware reads, exact COM settings, adapter wiring, and long-run timing still need bench validation with the arriving adapter and instrument. Begin at 0.5 seconds. The displayed unit is a label and must match the meter's scale; this prototype does not convert units or write device settings.
+### Simulation Mode
+Test the monitoring and recording workflow without connecting physical hardware.
 
-## Validation
+### First-launch demo recordings
+A clean installation automatically creates two completed **synthetic** pressure-test recordings (DEMO-001 and DEMO-002) in History. They include pressure trends, event annotations, and an example communication timeout, and are marked as simulation data—not real measurements. Seeding happens once only, when the recordings database does not exist. Existing databases are never replaced or seeded, and no personal/local database is included in the portable ZIP. Demo recordings can be removed individually from History when no longer needed.
 
-Six automated tests cover register decoding, disconnect/reconnect recording, persistence, output files, plot extrema/gaps, storage failure and single-instance locking. A Linux virtual-display GUI smoke test exercised recording, autosave, events, recovery, navigation, viewer and shutdown. Windows packaging and real hardware remain unvalidated. See `TEST_RESULTS.md` for scope and limits.
+## Supported devices
 
-## Files
+- **Aplisens PMS-970** — Modbus RTU
+- **More devices coming soon.** Contact the developer to request support for additional hardware.
 
-- `app.py`: Tk desktop views and user actions
-- `core.py`: serial/simulation sources, acquisition thread and SQLite
-- `exports.py`: CSV, Excel, PDF and PNG output
-- `seed_demo.py`: optional synthetic history data
-- `build_windows.bat`: portable Windows package
-- `.github/workflows/windows.yml`: manual Windows build workflow
+## Status key
+
+| Status | Meaning |
+| --- | --- |
+| LIVE | Receiving valid readings |
+| DISCONNECTED | No active device connection |
+| RECORDING | Saving pressure data |
+| REC OFF | Recording inactive |
+
+## Developer & Contact
+
+**Eka Yudhi Pratama**
+
+- epratama2@slb.com
+- just_eka@ymail.com
+
+---
+
+Digital Pressure Recorder • Version 1.0 • November 2026

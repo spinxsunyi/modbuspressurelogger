@@ -1,87 +1,418 @@
 from __future__ import annotations
-import json, math, os, sys, time, queue, threading
+import json, math, os, sys, time, queue, threading, ctypes
 from pathlib import Path
 from collections import deque
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, simpledialog
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
-from core import DEFAULTS,FIELDS,Store,Engine
+from core import DEFAULTS,FIELDS,Store,Engine,validated_pressure_multiplier
+from seed_demo import seed
+from units import from_psi,to_psi
 from instance import InstanceLock
 from exports import export,stamp
+from report_page import report_figure,report_figures,graph_figure,report_name,apply_report_time_scale
+from app_icon import set_window_icon, gauge_image
+from chart_scale import (WINDOWS, apply_window_time_grid, apply_engineering_grid,
+                         apply_pressure_grid, reduce_live_samples, validated_pressure_limits)
+from PIL import Image, ImageTk
+from sounds import SoundManager
 
 UI_FONT='Segoe UI' if os.name=='nt' else 'Helvetica'
+NAVY = '#17334c'
+INK = '#102b48'
+TEAL = '#008b92'
+TEAL_DARK = '#006e75'
+BG = '#f3f6f8'
+SURFACE = '#ffffff'
+BORDER = '#bfcbd5'
+PALE_TEAL = '#e5f5f3'
 BASE=Path(sys.executable).parent if getattr(sys,'frozen',False) else Path(__file__).parent
 DATA=Path(os.environ.get('PMS_LOGGER_DATA',str(BASE/'data')))
 
+class TimeScrollbar(ttk.Scrollbar):
+    """Native-feeling time scrollbar: update the thumb before chart rendering."""
+    def __init__(self,parent,move):
+        super().__init__(parent,orient='horizontal',command=self.on_scroll)
+        self.move=move
+        self.percent=100.0
+        self.fraction=1.0
+        self._pending=None
+        self._target=None
+
+    def on_scroll(self,*args):
+        span=max(0.0,1.0-self.fraction)
+        if span<=1e-9:return
+        start=self.percent/100.0*span
+        if args[0]=='moveto':
+            start=float(args[1])
+        elif args[0]=='scroll':
+            increment=max(.002,self.fraction*.15)
+            start+=int(args[1])*increment*({'pages':5,'units':1}.get(args[2],1))
+        start=max(0.0,min(span,start))
+        self.percent=100*start/span
+        # Move the native thumb immediately; defer expensive Matplotlib work.
+        super().set(start,min(1.0,start+self.fraction))
+        self._target=self.percent
+        if self._pending is None:
+            self._pending=self.after(16,self._flush)
+
+    def _flush(self):
+        self._pending=None
+        target=self._target
+        self._target=None
+        if target is not None and self.winfo_exists():
+            self.move(target)
+
+    def get(self):
+        return self.percent
+
+    def show_range(self,rows,left,right,offset):
+        if not rows:
+            self.fraction=1.0
+            self.percent=100.0
+            super().set(0,1)
+            return
+        first,last=rows[0]['ts'],rows[-1]['ts']
+        duration=max(last-first,.001)
+        start=max(0.0,min(1.0,(left-first)/duration))
+        end=max(start,min(1.0,(right-first)/duration))
+        self.fraction=max(0.0,min(1.0,end-start))
+        span=max(0.0,1.0-self.fraction)
+        # During dragging, do not snap the thumb back to a delayed plot position.
+        if self._pending is not None or self._target is not None:
+            return
+        self.percent=100*min(span,start)/span if span>0 else 100.0
+        super().set(start,end)
+
+
 class App(tk.Tk):
     def __init__(self):
-        super().__init__(); self.title('PMS Logger - Simulation Preview 0.1'); self.geometry('1280x820'); self.minsize(1000,680)
+        super().__init__(); self.title('Digital Pressure Recorder 1.0'); set_window_icon(self); self.geometry(f'{min(1440,self.winfo_screenwidth()-40)}x{min(900,self.winfo_screenheight()-100)}'); self.minsize(820,560); self.state('zoomed') if os.name=='nt' else None
         DATA.mkdir(parents=True,exist_ok=True)
         self.instance_lock=InstanceLock(DATA/'app.lock')
         self.exporting=False
         self.settings=dict(DEFAULTS)
         try: self.settings.update(json.loads((DATA/'settings.json').read_text()))
         except (OSError,ValueError): pass
+        try:self.settings['pressure_multiplier']=validated_pressure_multiplier(self.settings)
+        except ValueError:self.settings['pressure_multiplier']=1
+        # New installs use the PMS-970 preset; legacy custom serial settings remain manual.
+        if 'device_profile' not in self.settings:
+            existing_config=(DATA/'settings.json').exists()
+            self.settings['device_profile']=('manual' if existing_config and any(
+                self.settings.get(k)!=v for k,v in {'baud':9600,'parity':'E','stopbits':2,'address':1}.items()
+            ) else 'auto_pms970')
+        if self.settings['device_profile']=='auto_pms970' and self.settings['mode']=='Modbus RTU':
+            self.settings.update(baud=9600,parity='E',stopbits=2,address=1)
+        self.sounds=SoundManager(self.settings.get('sound_enabled',True))
+        self.audio_link_healthy=False
+        self.audio_connected_announced=False
+        self.audio_connection_failure_announced=False
+        self.audio_manual_disconnect=False
+        seed(DATA/'recordings.sqlite')  # Only on a clean first launch; never overwrite existing recordings.
         self.store=Store(DATA/'recordings.sqlite'); self.store.recover(); self.engine=Engine(self.store); self.engine.start()
-        self.sid=None; self.detail_sid=None; self.connected=False; self.latest=None; self.buffer=deque(maxlen=7200); self.viewer_sid=None
-        self.save_job=None; self.edit_loading=False; self.closing=False; self.last_plot=0; self.rec_count=0; self.rec_errors=0; self.pending=False
-        self.configure(bg='#f3f6f8'); style=ttk.Style(self); style.theme_use('clam')
-        style.configure('.',font=(UI_FONT,10),background='#f3f6f8',foreground='#17334c')
-        style.configure('TButton',padding=(12,7)); style.configure('Accent.TButton',background='#008b92',foreground='white')
-        style.configure('TEntry',fieldbackground='white'); style.configure('Treeview',rowheight=30,fieldbackground='white')
-        style.configure('Treeview.Heading',font=(UI_FONT,10,'bold')); style.configure('Title.TLabel',font=(UI_FONT,20,'bold'))
+        self.sid=None; self.detail_sid=None; self.connected=False; self.latest=None; self.connection_generation=0; self.connection_pending=False; self.connect_started=0; self.retired_engines=[]; self.simulation_recovery_attempted=False; self.connection_timed_out=False; self.buffer=deque(maxlen=172800); self.viewer_sid=None
+        self.save_job=None; self.edit_loading=False; self.closing=False; self._shutdown_complete=False; self._tick_after_id=None; self.shutdown_warning_shown=False; self.last_plot=0; self.rec_count=0; self.rec_errors=0; self.pending=False; self.details_user_visible=True
+        # Keep Windows awake for unattended acquisition; let the display turn off.
+        # SetThreadExecutionState is thread-scoped and must be cleared on exit.
+        self.sleep_prevention_active=False
+        if os.name=='nt':
+            try:
+                flags=0x80000000 | 0x00000001  # ES_CONTINUOUS | ES_SYSTEM_REQUIRED
+                self.sleep_prevention_active=bool(ctypes.windll.kernel32.SetThreadExecutionState(flags))
+            except (AttributeError,OSError):
+                pass
+        self.configure(bg=BG); style=ttk.Style(self); style.theme_use('clam')
+        style.configure('.',font=(UI_FONT,10),background=BG,foreground=INK)
+        style.configure('TFrame',background=BG)
+        style.configure('TLabel',background=BG,foreground=INK)
+        # Compact is the default for routine controls throughout the application.
+        style.configure('TButton',padding=(6,3),font=(UI_FONT,9),background='#edf2f6',foreground=INK,borderwidth=1)
+        style.configure('Compact.TButton',padding=(6,3),font=(UI_FONT,9),background='#edf2f6',foreground=INK,borderwidth=1)
+        style.map('Compact.TButton',background=[('pressed','#cddde7'),('active','#dce8ef')])
+        style.map('TButton',background=[('pressed','#cddde7'),('active','#dce8ef')])
+        # Read-only report dropdowns remain visibly enabled (white field, dark text).
+        style.configure('Report.TCombobox',fieldbackground='white',background='white',
+                        foreground=INK,selectbackground='white',selectforeground=INK)
+        style.map('Report.TCombobox',fieldbackground=[('readonly','white')],
+                  foreground=[('readonly',INK)],selectbackground=[('readonly','white')],
+                  selectforeground=[('readonly',INK)])
+        # Settings: visually distinguish the frequently adjusted inputs.
+        style.configure('SettingsWhite.TCombobox',fieldbackground='#ffffff',background='#ffffff',foreground=INK)
+        style.map('SettingsWhite.TCombobox',fieldbackground=[('readonly','#ffffff')],
+                  foreground=[('readonly',INK)],selectbackground=[('readonly','#ffffff')],selectforeground=[('readonly',INK)])
+        style.configure('SettingsGrey.TCombobox',fieldbackground='#dedede',background='#dedede',foreground=INK)
+        style.map('SettingsGrey.TCombobox',fieldbackground=[('readonly','#dedede')],
+                  foreground=[('readonly',INK)],selectbackground=[('readonly','#dedede')],selectforeground=[('readonly',INK)])
+        style.configure('SettingsGrey.TEntry',fieldbackground='#dedede',foreground=INK)
+        style.configure('Live.TCombobox',fieldbackground='white',background='white',foreground=INK,selectbackground='white',selectforeground=INK)
+        style.map('Live.TCombobox',fieldbackground=[('readonly','white')],foreground=[('readonly',INK)],selectbackground=[('readonly','white')],selectforeground=[('readonly',INK)])
+        style.configure('Danger.TButton',background='#c62828',foreground='white',padding=(10,6),font=(UI_FONT,9,'bold'))
+        style.map('Danger.TButton',background=[('disabled','#d9e0e5'),('pressed','#a51e1e'),('active','#b32222'),('!disabled','#c62828')],foreground=[('disabled','#52616c'),('!disabled','white')])
+        style.configure('Accent.TButton',background=TEAL,foreground='white',padding=(14,9),font=(UI_FONT,10,'bold'))
+        # Disabled primary actions must lose their accent fill, not only dim the text.
+        # State order matters: disabled is evaluated before active/pressed.
+        style.map('Accent.TButton',
+                  background=[('disabled','#d9e0e5'),('pressed',TEAL_DARK),
+                              ('active',TEAL_DARK),('!disabled',TEAL)],
+                  foreground=[('disabled','#52616c'),('!disabled','white')])
+        style.configure('CompactAction.TButton',background='#21834b',foreground='white',padding=(8,4),font=(UI_FONT,9,'bold'))
+        style.map('CompactAction.TButton',background=[('disabled','#d9e0e5'),('pressed','#176538'),('active','#176538'),('!disabled','#21834b')],foreground=[('disabled','#52616c'),('!disabled','white')])
+        style.configure('Report.TButton',background='#21834b',foreground='white',padding=(15,9),font=(UI_FONT,11,'bold'))
+        style.map('Report.TButton',background=[('pressed','#176538'),('active','#176538')],foreground=[('!disabled','white')])
+        style.configure('Record.TButton',background='#d52e36',foreground='white',padding=(14,9),font=(UI_FONT,10,'bold'))
+        style.map('Record.TButton',background=[('pressed','#a91d27'),('active','#bd232e')],foreground=[('!disabled','white')])
+        style.configure('Stop.TButton',background='#d52e36',foreground='white',padding=(14,9),font=(UI_FONT,10,'bold'))
+        style.map('Stop.TButton',background=[('pressed','#a91d27'),('active','#bd232e')])
+        style.configure('Section.TLabel',background=NAVY,foreground='white',padding=(12,8),font=(UI_FONT,11,'bold'))
+        style.configure('TEntry',fieldbackground=SURFACE,padding=4)
+        style.configure('TCombobox',fieldbackground=SURFACE,padding=3)
+        style.configure('Treeview',rowheight=30,background=SURFACE,fieldbackground=SURFACE,foreground=INK)
+        style.map('Treeview',background=[('selected',TEAL)],foreground=[('selected','white')])
+        style.configure('Treeview.Heading',font=(UI_FONT,10,'bold'),background='#e8eef3',foreground=INK,padding=(8,7))
+        style.configure('Title.TLabel',font=(UI_FONT,20,'bold'))
+        style.configure('TLabelframe',background=BG,relief='solid',borderwidth=1)
+        style.configure('TLabelframe.Label',font=(UI_FONT,11,'bold'),foreground=NAVY,background=BG)
         nav=tk.Frame(self,bg='#17334c'); nav.pack(fill='x')
-        tk.Label(nav,text='PMS Logger',font=(UI_FONT,20,'bold'),bg='#17334c',fg='white',padx=20,pady=12).pack(side='left')
-        for page in ['Live Monitor','History','Settings']:
-            tk.Button(nav,text=page,command=lambda p=page:self.show(p),bg='#17334c',fg='white',bd=0,padx=18,pady=15).pack(side='left')
-        self.global_status=tk.Label(nav,text='SIMULATION',bg='#17334c',fg='#ffcb72',padx=15); self.global_status.pack(side='right')
+        self.header_logo=ImageTk.PhotoImage(gauge_image(30),master=self)
+        tk.Label(nav,image=self.header_logo,bg=NAVY,padx=0,pady=0).pack(side='left',padx=(12,4))
+        self.brand=tk.Label(nav,text='Digital Pressure Recorder',font=(UI_FONT,15,'bold'),bg=NAVY,fg='white',padx=4,pady=2); self.brand.pack(side='left')
+        self.nav_buttons={}
+        for page in ['Live Monitor','History','Reporting','Settings','Help','About']:
+            button=tk.Button(nav,text=page,command=lambda p=page:self.show(p),bg=NAVY,fg='white',activebackground=TEAL_DARK,activeforeground='white',relief='flat',bd=0,padx=10,pady=2,font=(UI_FONT,9))
+            button.pack(side='left'); self.nav_buttons[page]=button
+        # Independent indicators: acquisition mode/health and recording state.
+        self.status_live=tk.Label(nav,text='DISCONNECTED / NO DATA',bg='#b55c00',fg='white',padx=8,pady=4)
+        self.status_live.pack(side='right',padx=12)
+        self.status_rec=tk.Label(nav,text='REC OFF',bg='#576677',fg='white',padx=8,pady=4)
+        self.status_rec.pack(side='right',padx=12)
+        # Reserve the bottom strip before the expanding content so it remains visible.
+        self.status_bar=tk.Frame(self,bg=NAVY)
+        self.status_bar.pack(side='bottom',fill='x')
+        self.footer=tk.Label(self.status_bar,text='Ready',bg=NAVY,fg='white',anchor='w',padx=10,pady=4)
+        self.footer.pack(side='left')
+        self.credit=tk.Label(self.status_bar,text='A software by Eka Yudhi Pratama  •  November 2026',bg=NAVY,fg='white',anchor='e',padx=10,pady=4)
+        self.credit.pack(side='right')
         self.host=ttk.Frame(self,padding=14); self.host.pack(fill='both',expand=True)
-        self.pages={name:ttk.Frame(self.host) for name in ['Live Monitor','History','Settings','Viewer']}
-        self.footer=ttk.Label(self,text='Ready',padding=8); self.footer.pack(fill='x')
-        self.make_live(); self.make_history(); self.make_settings(); self.make_viewer(); self.show('Live Monitor')
-        self.protocol('WM_DELETE_WINDOW',self.close); self.after(50,self.tick)
-        if self.settings.get('auto_connect'): self.after(200,self.connect)
+        self.pages={name:ttk.Frame(self.host) for name in ['Live Monitor','History','Reporting','Settings','Help','About','Viewer']}
+        self.make_live(); self.make_history(); self.make_reporting(); self.make_settings(); self.make_help(); self.make_about(); self.make_viewer(); self.enhance(); self.show('Live Monitor')
+        # Route mouse-wheel scrolling to the active scrollable page.
+        self.bind_all('<MouseWheel>',self.scroll_page,add='+')
+        self.bind_all('<Button-4>',self.scroll_page,add='+')
+        self.bind_all('<Button-5>',self.scroll_page,add='+')
+        self.protocol('WM_DELETE_WINDOW',self.close)
+        self.bind_all('<Control-q>',lambda event:self.close(),add='+')
+        self._tick_after_id=self.after(50,self.tick)
+        if self.settings.get('auto_connect') and (self.settings['mode']=='Simulation' or self.settings['port']):self.after(200,self.connect)
     def show(self,name):
         for p in self.pages.values(): p.pack_forget()
         self.pages[name].pack(fill='both',expand=True); self.page=name
+        for key,button in self.nav_buttons.items(): button.config(bg=TEAL if key==('History' if name=='Viewer' else name) else NAVY)
         if name=='History': self.refresh_history()
+        if name=='Reporting': self.refresh_reporting()
     def plot(self,parent):
-        fig=Figure(figsize=(8,4),dpi=100,facecolor='white'); ax=fig.add_subplot(111); fig.subplots_adjust(left=.09,right=.98,bottom=.15,top=.92)
+        fig=Figure(figsize=(4,2),dpi=100,facecolor='white'); ax=fig.add_subplot(111); fig.subplots_adjust(left=.10,right=.98,bottom=.17,top=.91)
         canvas=FigureCanvasTkAgg(fig,master=parent); canvas.get_tk_widget().pack(fill='both',expand=True)
         return fig,ax,canvas
+    def chart_scroll(self,event,live):
+        """Zoom time around the cursor; never modify the recorded samples."""
+        ax=self.lax if live else self.vax
+        if event.inaxes!=ax or event.xdata is None:return
+        direction=getattr(event,'button',None)
+        if direction not in ('up','down'):return
+        lo,hi=ax.get_xlim()
+        factor=.8 if direction=='up' else 1.25
+        width=max((hi-lo)*factor,.02 if not live else .5)
+        ratio=max(0,min(1,(event.xdata-lo)/(hi-lo))) if hi>lo else .5
+        new_lo=event.xdata-ratio*width
+        ax.set_xlim(new_lo,new_lo+width)
+        if live:
+            self.follow.set(False)
+            self.lcanvas.draw_idle()
+        else:
+            self.history_window.set('All data')
+            self.view_vars['xmin'].set(str(new_lo))
+            self.view_vars['xmax'].set(str(new_lo+width))
+            self.vcanvas.draw_idle()
+
+    def chart_double_click(self,event,live):
+        if event.inaxes is None or not getattr(event,'dblclick',False):return
+        if live:
+            self.follow.set(True)
+            self.live_auto.set(True)
+            self.scale_mode.set('Auto')
+        else:
+            self.history_window.set('All data')
+            self.viewer_scale_mode.set('Auto')
+            self.auto_history_scale()
+            self.slide_history(0)
+
+    def chart_tools(self,canvas,parent,live):
+        tools=NavigationToolbar2Tk(canvas,parent,pack_toolbar=False)
+        canvas.mpl_connect('scroll_event',lambda event:self.chart_scroll(event,live))
+        canvas.mpl_connect('button_press_event',lambda event:self.chart_double_click(event,live))
+        if live:
+            bar=self.live_toolbar
+            self.live_chart_tools=bar
+        else:
+            bar=self.viewer_toolbar
+        def zoom(factor):
+            ax=canvas.figure.axes[0]
+            lo,hi=ax.get_xlim()
+            center=(lo+hi)/2
+            radius=(hi-lo)*factor/2
+            if live: self.follow.set(False)
+            ax.set_xlim(center-radius,center+radius)
+            canvas.draw_idle()
+        def reset():
+            if live:
+                self.live_auto.set(True)
+                self.scale_mode.set('Auto')
+                self.follow.set(True)
+                self.lax.set_autoscaley_on(True)
+            else:
+                self.history_window.set('All data')
+                self.viewer_scale_mode.set('Auto')
+                self.auto_history_scale()
+                self.slide_history(0)
+        def toggle_pan():
+            tools.pan()
+            refresh_pan_button()
+        def refresh_pan_button():
+            active=bool(tools.mode)
+            pan_button.configure(bg=TEAL if active else '#edf2f6',
+                                 fg='white' if active else INK,
+                                 activebackground=TEAL_DARK if active else '#dce8ef',
+                                 activeforeground='white' if active else INK,
+                                 relief='sunken' if active else 'raised')
+        labels=[('Reset',reset),('−',lambda:zoom(1.5)),('+',lambda:zoom(2/3))]
+        pan_button=tk.Button(bar,text='✥ Pan',command=toggle_pan,
+                             width=8,font=(UI_FONT,11,'bold'),bd=1,padx=6,pady=3)
+        pan_button.pack(side='right',padx=2)
+        refresh_pan_button()
+        for label,cmd in labels:
+            ttk.Button(bar,text=label,command=cmd,style='Compact.TButton',
+                       width=6 if label!='Reset' else 7).pack(side='right',padx=2)
+
+    def auto_history_scale(self):
+        valid=[r['value'] for r in self.vrows if r['quality']=='OK' and r['value'] is not None]
+        if valid:
+            lo,hi=min(valid),max(valid)
+            pad=max((hi-lo)*.05,.01)
+            self.view_vars['ymin'].set(str(lo-pad))
+            self.view_vars['ymax'].set(str(hi+pad))
+            self.paint_viewer()
+
     def make_live(self):
-        p=self.pages['Live Monitor']; top=ttk.Frame(p); top.pack(fill='x')
+        p=self.pages['Live Monitor']; top=ttk.Frame(p); top.pack(fill='x',pady=(0,1))
         self.connection=ttk.Label(top,text='Waiting for device'); self.connection.pack(side='left')
-        self.connect_btn=ttk.Button(top,text='Connect',command=self.toggle_connect); self.connect_btn.pack(side='left',padx=12)
-        self.drop=tk.BooleanVar(); ttk.Checkbutton(top,text='Simulate disconnect',variable=self.drop,command=lambda:self.engine.send('drop',self.drop.get())).pack(side='right')
-        body=ttk.Panedwindow(p,orient='horizontal'); body.pack(fill='both',expand=True,pady=10)
-        main=ttk.Frame(body); self.details_panel=ttk.LabelFrame(body,text='Recording details  |  autosaved',padding=12); body.add(main,weight=4); body.add(self.details_panel,weight=1); self.live_pane=body
-        self.value=ttk.Label(main,text='-',font=(UI_FONT,42,'bold'),foreground='#008b92'); self.value.pack(anchor='w')
-        self.reading_status=ttk.Label(main,text='Waiting for first reading'); self.reading_status.pack(anchor='w')
-        toolbar=ttk.Frame(main); toolbar.pack(fill='x',pady=6)
-        self.follow=tk.BooleanVar(value=True); ttk.Checkbutton(toolbar,text='Auto-follow',variable=self.follow).pack(side='left')
-        self.window=tk.StringVar(value='5 min'); ttk.Combobox(toolbar,textvariable=self.window,values=['1 min','5 min','30 min','Buffer'],state='readonly',width=10).pack(side='left',padx=8)
-        ttk.Button(toolbar,text='Live',command=lambda:self.follow.set(True)).pack(side='left')
-        ttk.Button(toolbar,text='Details +/-',command=self.toggle_details).pack(side='right')
-        self.lfig,self.lax,self.lcanvas=self.plot(main); self.lax.set(xlabel='Time',ylabel='Pressure'); self.lax.grid(alpha=.2)
+        self.connect_btn=ttk.Button(top,text='Connect',style='Compact.TButton',command=self.toggle_connect); self.connect_btn.pack(side='left',padx=(10,8))
+        self.reading_status=tk.Label(top,text='Waiting for first reading',bg=BG,fg=INK,font=(UI_FONT,9),anchor='w')
+        self.reading_status.pack(side='left',padx=(0,8))
+        self.drop=tk.BooleanVar()
+        self.simulate_disconnect_button=ttk.Checkbutton(top,text='Simulate disconnect',variable=self.drop,
+                    command=lambda:self.engine.send('drop',self.drop.get()))
+        self.update_simulate_disconnect_visibility()
+        body=ttk.Panedwindow(p,orient='horizontal'); body.pack(fill='both',expand=True,pady=(2,2))
+        main=ttk.Frame(body); self.details_panel=ttk.LabelFrame(body,text='Recording details',padding=10); body.add(main,weight=5); body.add(self.details_panel,weight=1); self.live_pane=body
+        readings=ttk.Frame(main);readings.pack(fill='x',pady=(0,2))
+        for col in range(3):readings.columnconfigure(col,weight=1,uniform='metric')
+        def metric_card(column,title,highlight=False):
+            bg=PALE_TEAL if highlight else SURFACE
+            panel=tk.Frame(readings,bg=bg,highlightthickness=1,
+                           highlightbackground='#a9d6d4' if highlight else BORDER)
+            panel.grid(row=0,column=column,sticky='nsew',padx=(0,8) if column<2 else (0,0))
+            tk.Label(panel,text=title,bg=bg,fg=NAVY,font=(UI_FONT,10,'bold'),
+                     anchor='w').pack(fill='x',padx=12,pady=(2,0))
+            return panel,bg
+        live_card,live_bg=metric_card(0,'Live pressure',True)
+        self.value=tk.Label(live_card,text='—',font=(UI_FONT,20,'bold'),bg=live_bg,
+                            fg=TEAL_DARK,anchor='w')
+        self.value.pack(fill='x',padx=12,pady=(0,2))
+        self.metric=[]
+        for col,title in [(1,'Recording minimum'),(2,'Recording maximum')]:
+            panel,panel_bg=metric_card(col,title)
+            label=tk.Label(panel,text='—',bg=panel_bg,fg=NAVY,
+                           font=(UI_FONT,20,'bold'),anchor='w')
+            label.pack(fill='x',padx=12,pady=(1,5))
+            self.metric.append(label)
+        self.live_toolbar=ttk.Frame(main); toolbar=self.live_toolbar
+        toolbar.pack(fill='x',pady=(2,4))
+        self.follow=tk.BooleanVar(value=True)
+        self.live_window_origin=None
+        ttk.Checkbutton(toolbar,text='Follow',variable=self.follow).pack(side='left')
+        ttk.Label(toolbar,text='Window').pack(side='left',padx=(9,3))
+        self.window=tk.StringVar(value='5 min')
+        ttk.Combobox(toolbar,textvariable=self.window,values=['1 min','5 min','10 min','15 min','30 min','1 hour','12 hours','24 hours','Buffer data'],state='readonly',style='Live.TCombobox',width=9).pack(side='left',padx=(0,5))
+        ttk.Button(toolbar,text='Go to Live',style='Compact.TButton',command=lambda:self.follow.set(True)).pack(side='left')
+        self.scaling_indicator=ttk.Label(toolbar,text='Pressure correction: x'+str(self.settings.get('pressure_multiplier',1)),foreground='#a45300')
+        self.scaling_indicator.pack(side='left',padx=(9,0))
+        self.scale_mode=tk.StringVar(value='Auto')
+        ttk.Radiobutton(toolbar,text='Auto scale',value='Auto',variable=self.scale_mode,command=self.select_live_scale).pack(side='left',padx=(10,0))
+        ttk.Radiobutton(toolbar,text='Manual scale',value='Manual',variable=self.scale_mode,command=self.select_live_scale).pack(side='left',padx=(5,0))
+        ttk.Button(toolbar,text='Manual scale options',style='Compact.TButton',command=self.show_live_options).pack(side='left',padx=(8,0))
+        ttk.Button(top,text='Details +/−',style='Compact.TButton',command=self.toggle_details).pack(side='right',padx=10)
+        self.lfig,self.lax,self.lcanvas=self.plot(main); self.lax.set(xlabel='Time',ylabel='Pressure'); apply_engineering_grid(self.lax)
         self.line,=self.lax.plot([],[],color='#008b92',lw=1.2)
         self.lcanvas.mpl_connect('button_press_event',lambda e:self.follow.set(False) if e.inaxes else None)
-        NavigationToolbar2Tk(self.lcanvas,main).update()
-        controls=ttk.Frame(main); controls.pack(fill='x',pady=8)
-        self.record_btn=ttk.Button(controls,text='REC Record',style='Accent.TButton',command=self.record); self.record_btn.pack(side='left')
-        self.event_btn=ttk.Button(controls,text='+ Add Event',command=self.add_live_event,state='disabled'); self.event_btn.pack(side='left',padx=10)
+        self.chart_tools(self.lcanvas,main,True)
+        controls=ttk.Frame(main); controls.pack(side='bottom',before=readings,fill='x',pady=(3,2))
+        self.record_btn=ttk.Button(controls,text='⏺ Start recording',style='Record.TButton',command=self.record); self.record_btn.pack(side='left')
+        self.event_btn=ttk.Button(controls,text='+ Add Event',style='Compact.TButton',command=self.add_live_event,state='disabled'); self.event_btn.pack(side='left',padx=10)
         self.rec_label=ttk.Label(controls,text='Preview only  |  not saved'); self.rec_label.pack(side='left')
         self.detail_vars={}; self.detail_entries=[]
-        self.session_name=ttk.Label(self.details_panel,text='Press Record to create a session',wraplength=250); self.session_name.pack(anchor='w',pady=(0,8))
-        for k in FIELDS:
-            ttk.Label(self.details_panel,text=k.replace('_',' ').title()).pack(anchor='w')
-            v=tk.StringVar(); en=ttk.Entry(self.details_panel,textvariable=v,width=28,state='disabled'); en.pack(fill='x',pady=(1,7)); self.detail_vars[k]=v; self.detail_entries.append(en)
+        self.session_name=ttk.Label(self.details_panel,text='Press "Start Recording" to create a session',wraplength=250); self.session_name.pack(anchor='w',pady=(0,8))
+        form=ttk.Frame(self.details_panel);form.pack(fill='x')
+        form.columnconfigure(1,weight=1)
+        for index,k in enumerate(FIELDS):
+            ttk.Label(form,text=k.replace('_',' ').title()).grid(row=index,column=0,sticky='nw',padx=(0,5),pady=4)
+            v=tk.StringVar()
+            self.detail_vars[k]=v
+            if k=='notes':
+                en=tk.Text(form,width=18,height=4,wrap='word',state='disabled',font=(UI_FONT,10))
+                self.notes=en
+                en.bind('<<Modified>>',self.notes_changed)
+            else:
+                en=ttk.Entry(form,textvariable=v,width=18,state='disabled')
+            en.grid(row=index,column=1,sticky='ew',pady=3)
+            if k=='job_date':
+                ttk.Button(form,text='▾',width=2,command=self.pick_date).grid(row=index,column=2)
+            self.detail_entries.append(en)
             v.trace_add('write',self.schedule_save)
         self.saved=ttk.Label(self.details_panel,text=''); self.saved.pack(anchor='w')
+    def notes_changed(self,event):
+        if self.notes.edit_modified():
+            self.notes.edit_modified(False)
+            if not self.edit_loading:
+                self.detail_vars['notes'].set(self.notes.get('1.0','end-1c'))
+
+    def pick_date(self):
+        if not self.detail_sid: return
+        import calendar
+        from datetime import date
+        try: current=date.fromisoformat(self.detail_vars['job_date'].get())
+        except ValueError: current=date.today()
+        dialog=tk.Toplevel(self);dialog.title('Job date');dialog.transient(self)
+        def choose(day):
+            self.detail_vars['job_date'].set(day.isoformat())
+            dialog.destroy()
+        def draw(year,month):
+            for child in dialog.winfo_children(): child.destroy()
+            for col,delta,label in [(0,-1,'‹'),(6,1,'›')]:
+                index=year*12+month-1+delta
+                ttk.Button(dialog,text=label,width=3,command=lambda i=index:draw(i//12,i%12+1)).grid(row=0,column=col)
+            ttk.Label(dialog,text=f'{calendar.month_name[month]} {year}').grid(row=0,column=1,columnspan=5)
+            for col,name in enumerate(calendar.day_abbr): ttk.Label(dialog,text=name).grid(row=1,column=col)
+            for row,week in enumerate(calendar.monthcalendar(year,month),2):
+                for col,n in enumerate(week):
+                    if n: ttk.Button(dialog,text=str(n),width=3,command=lambda n=n:choose(date(year,month,n))).grid(row=row,column=col)
+        draw(current.year,current.month)
     def toggle_details(self):
-        if str(self.details_panel) in [str(p) for p in self.live_pane.panes()]: self.live_pane.forget(self.details_panel)
-        else: self.live_pane.add(self.details_panel,weight=1)
+        visible=str(self.details_panel) in self.live_pane.panes()
+        self.details_user_visible=not visible
+        if visible:self.live_pane.forget(self.details_panel)
+        else:self.live_pane.add(self.details_panel,weight=1)
     def schedule_save(self,*_):
         if self.edit_loading or not self.detail_sid:return
         if self.save_job:self.after_cancel(self.save_job)
@@ -89,20 +420,49 @@ class App(tk.Tk):
     def save_details(self):
         self.save_job=None
         if self.detail_sid:
-            try: self.store.update(self.detail_sid,'details',{k:v.get() for k,v in self.detail_vars.items()}); self.saved.config(text='Saved')
-            except Exception as e: self.saved.config(text='SAVE FAILED'); messagebox.showerror('Save failed',str(e))
+            try:
+                self.store.update(self.detail_sid,'details',{k:v.get() for k,v in self.detail_vars.items()})
+                self.saved.config(text='Saved')
+            except Exception as e:
+                self.saved.config(text='SAVE FAILED')
+                messagebox.showerror('Save failed',str(e))
+                return False
+        return True
     def load_details(self,sid):
         if self.save_job:self.after_cancel(self.save_job); self.save_details()
         self.detail_sid=sid; s=self.store.get(sid); d=json.loads(s['details']); self.edit_loading=True
         for k,v in self.detail_vars.items():v.set(d.get(k,''))
-        self.edit_loading=False
         for en in self.detail_entries:en.config(state='normal')
+        self.notes.delete('1.0','end')
+        self.notes.insert('1.0',d.get('notes',''))
+        self.notes.edit_modified(False)
+        self.edit_loading=False
         self.session_name.config(text=s['name']); self.saved.config(text='Saved')
     def connect(self):
-        self.drop.set(False); self.engine.send('connect',dict(self.settings))
+        self.audio_link_healthy=False
+        self.audio_connected_announced=False
+        self.audio_connection_failure_announced=False
+        self.audio_manual_disconnect=False
+        self.connection_generation+=1
+        self.connection_pending=True
+        self.connect_started=time.monotonic()
+        self.simulation_recovery_attempted=False
+        self.connection_timed_out=False
+        self.connected=False
+        self.latest=None
+        self.buffer.clear()
+        self.value.config(text='—')
+        self.reading_status.config(text='CONNECTING  |  waiting for valid reading',fg=INK)
+        self.connection.config(text='Connecting  |  '+self.settings['mode']+'  |  '+(self.settings['port'] or 'virtual sensor'))
+        self.connect_btn.config(text='Connecting...',state='disabled')
+        self.drop.set(False)
+        self.engine.send('connect',dict(self.settings),self.connection_generation)
     def toggle_connect(self):
         if self.sid:messagebox.showinfo('Recording','Stop recording before disconnecting.');return
-        self.engine.send('disconnect') if self.connected else self.connect()
+        if self.connected:
+            self.audio_manual_disconnect=True
+            self.engine.send('disconnect')
+        else:self.connect()
     def record(self):
         if self.pending:return
         if not self.sid and (not self.connected or not self.latest or self.latest['quality']!='OK' or time.time()-self.latest['ts']>max(2,3*self.settings['interval'])):
@@ -114,125 +474,1634 @@ class App(tk.Tk):
         label=simpledialog.askstring('Add event','Event label (timestamp captured now):',parent=self)
         if label:self.store.event(sid,ts,label.strip()); self.footer.config(text='Event saved')
     def make_history(self):
-        p=self.pages['History']; ttk.Label(p,text='Recordings',style='Title.TLabel').pack(anchor='w')
-        bar=ttk.Frame(p); bar.pack(fill='x',pady=12); self.search=tk.StringVar()
-        ttk.Entry(bar,textvariable=self.search,width=45).pack(side='left'); ttk.Button(bar,text='Search / Refresh',command=self.refresh_history).pack(side='left',padx=8)
-        ttk.Label(bar,text='Search well, job, engineer or record ID').pack(side='left')
-        cols=('start','well','job','duration','mode','status'); self.history=ttk.Treeview(p,columns=cols,show='headings',selectmode='browse')
-        for col in cols:self.history.heading(col,text=col.title());self.history.column(col,width=150)
-        self.history.pack(fill='both',expand=True); self.history.bind('<Double-1>',lambda e:self.open_selected())
-        ttk.Button(p,text='Open in Viewer',style='Accent.TButton',command=self.open_selected).pack(anchor='e',pady=12)
+        p=self.pages['History']
+        heading=ttk.Frame(p);heading.pack(fill='x',pady=(0,6))
+        ttk.Label(heading,text='Recordings',style='Title.TLabel').pack(side='left')
+        self.history_count=ttk.Label(heading,text='0 recordings',foreground='#576677')
+        self.history_count.pack(side='right',pady=(9,0))
+
+        bar=ttk.Frame(p);bar.pack(fill='x',pady=(2,10))
+        self.search=tk.StringVar()
+        search_box=ttk.Entry(bar,textvariable=self.search,width=43)
+        search_box.pack(side='left',fill='x',expand=True)
+        search_box.bind('<Return>',lambda event:self.refresh_history())
+        ttk.Button(bar,text='Search',style='Compact.TButton',
+                   command=self.refresh_history).pack(side='left',padx=(8,4))
+        ttk.Button(bar,text='Clear',style='Compact.TButton',
+                   command=self.clear_history_search).pack(side='left',padx=(0,4))
+        ttk.Button(bar,text='Refresh',style='Compact.TButton',
+                   command=self.refresh_history).pack(side='left')
+        ttk.Label(p,text='Search by well, job, engineer or record ID. Double-click a recording to open it.',
+                  foreground='#576677').pack(anchor='w',pady=(0,5))
+        ttk.Label(p,text='To prepare a report, select a recording and open it in Viewer, then click Create Report.',
+                  foreground=TEAL_DARK,wraplength=1100).pack(anchor='w',pady=(0,10))
+
+        table=ttk.Frame(p);table.pack(fill='both',expand=True)
+        cols=('start','well','job','engineer','duration','mode','status')
+        self.history=ttk.Treeview(table,columns=cols,show='headings',selectmode='browse')
+        widths={'start':(175,145),'well':(240,130),'job':(200,115),
+                'engineer':(190,120),'duration':(105,85),'mode':(125,95),'status':(125,90)}
+        labels={'start':'Started','well':'Well / Recording','job':'Job',
+                'engineer':'Engineer','duration':'Duration','mode':'Source','status':'Status'}
+        for col in cols:
+            self.history.heading(col,text=labels[col])
+            width,minimum=widths[col]
+            self.history.column(col,width=width,minwidth=minimum,stretch=True,
+                                anchor='w' if col in ('start','well','job','engineer') else 'center')
+        vertical=ttk.Scrollbar(table,orient='vertical',command=self.history.yview)
+        horizontal=ttk.Scrollbar(table,orient='horizontal',command=self.history.xview)
+        self.history.configure(yscrollcommand=vertical.set,xscrollcommand=horizontal.set)
+        table.rowconfigure(0,weight=1);table.columnconfigure(0,weight=1)
+        self.history.grid(row=0,column=0,sticky='nsew')
+        vertical.grid(row=0,column=1,sticky='ns')
+        horizontal.grid(row=1,column=0,sticky='ew')
+        self.history.tag_configure('alternate',background='#edf4f6')
+        self.history.bind('<Double-1>',lambda e:self.open_selected())
+        self.history.bind('<<TreeviewSelect>>',self.update_history_selection)
+        footer=ttk.Frame(p);footer.pack(fill='x',pady=(10,0))
+        self.history_selection=ttk.Label(footer,text='Select a recording to review',foreground='#576677')
+        self.history_selection.pack(side='left',padx=(0,12))
+        self.history_open=ttk.Button(footer,text='Open in Viewer',style='Accent.TButton',
+                                     command=self.open_selected,state='disabled')
+        self.history_open.pack(side='right')
+        self.history_delete=ttk.Button(footer,text='Delete record',style='Danger.TButton',
+                                       command=self.delete_selected_recording,state='disabled')
+        self.history_delete.pack(side='left')
+        self.history_report=ttk.Button(footer,text='Create Report',style='Accent.TButton',
+                                       command=self.report_selected_recording,state='disabled')
+        self.history_report.pack(side='right',padx=(0,10))
+
+    def clear_history_search(self):
+        self.search.set('')
+        self.refresh_history()
+
+    def update_history_selection(self,event=None):
+        chosen=self.history.selection()
+        valid=bool(chosen and self.history.exists(chosen[0]))
+        self.history_open.configure(state='normal' if valid else 'disabled')
+        self.history_delete.configure(state='normal' if valid else 'disabled')
+        self.history_report.configure(state='normal' if valid else 'disabled')
+        self.history_selection.configure(text='1 recording selected' if valid else 'Select a recording to review')
+
     def refresh_history(self):
-        for i in self.history.get_children():self.history.delete(i)
-        for s in self.store.sessions(self.search.get()):
-            d=json.loads(s['details']); end=s['ended'] or self.store.stats(s['id'])['last'] or s['started']
-            self.history.insert('', 'end',iid=s['id'],values=(stamp(s['started'],self.settings['utc_offset'])[:19],d.get('well') or s['name'],d.get('job',''),f"{max(0,end-s['started'])/60:.1f} min",s['mode'],s['state']))
+        previous=self.history.selection()
+        previous=previous[0] if previous else None
+        for item in self.history.get_children():self.history.delete(item)
+        records=self.store.sessions(self.search.get().strip())
+        for index,session in enumerate(records):
+            details=json.loads(session['details'])
+            finish=session['ended'] or self.store.stats(session['id'])['last'] or session['started']
+            duration=max(0,finish-session['started'])
+            minutes,seconds=divmod(int(duration),60)
+            duration_text=f'{minutes}m {seconds:02d}s'
+            self.history.insert('','end',iid=session['id'],
+                tags=('alternate',) if index%2 else (),
+                values=(stamp(session['started'],None)[:19].replace('T',' '),
+                        details.get('well') or session['name'],
+                        details.get('job') or '—',
+                        details.get('engineer') or '—',
+                        duration_text,session['mode'],session['state']))
+        count=len(records)
+        self.history_count.configure(text=f'{count} recording'+('' if count==1 else 's')+
+                                     (' found' if self.search.get().strip() else ''))
+        if previous and self.history.exists(previous):
+            self.history.selection_set(previous)
+            self.history.see(previous)
+        self.update_history_selection()
+
     def open_selected(self):
-        sel=self.history.selection()
-        if sel:self.load_viewer(sel[0])
+        chosen=self.history.selection()
+        if chosen and self.history.exists(chosen[0]):
+            self.load_viewer(chosen[0])
+
+    def delete_selected_recording(self):
+        chosen=self.history.selection()
+        if not chosen or not self.history.exists(chosen[0]):return
+        sid=chosen[0]
+        session=self.store.get(sid)
+        if not session:return
+        if session['state']=='Recording' or sid==self.sid:
+            messagebox.showwarning('Delete recording','Stop recording before deleting this session.',parent=self)
+            return
+        details=json.loads(session['details'])
+        name=(details.get('well') or session['name'])
+        if not messagebox.askyesno('Delete recording',
+                f'Permanently delete recording "{name}"?\n\n'
+                'All pressure samples and annotations in this recording will be deleted. '
+                'This cannot be undone.',icon='warning',parent=self):
+            return
+        try:
+            if self.store.delete_session(sid):
+                if sid==getattr(self,'reporting_sid',None):
+                    self.reporting_sid=None
+                if sid==self.viewer_sid:
+                    self.viewer_sid=None
+                    self.vsession=None
+                    self.vrows=[]
+                    self.vevents=[]
+                self.refresh_history()
+                self.footer.configure(text='Recording deleted')
+        except Exception as exc:
+            messagebox.showerror('Delete recording',str(exc),parent=self)
+
+    def report_selected_recording(self):
+        chosen=self.history.selection()
+        if chosen and self.history.exists(chosen[0]):
+            self.open_reporting(chosen[0])
+
+    def make_reporting(self):
+        p=self.pages['Reporting']
+        ttk.Label(p,text='Reporting',style='Title.TLabel').pack(anchor='w',pady=(0,10))
+        navigation=ttk.Frame(p);navigation.pack(fill='x',pady=(0,6))
+        self.report_step=1
+        self.report_step_buttons=[]
+        for number,name in enumerate(('1. Select Record','2. Select Interval','3. Preview & Export'),1):
+            button=tk.Button(navigation,text=name,relief='flat',bd=1,padx=16,pady=9,
+                             command=lambda n=number:self.show_report_step(n))
+            button.pack(side='left',padx=(0,10))
+            self.report_step_buttons.append(button)
+        self.report_continue_interval=ttk.Button(navigation,text='Continue to Preview & Export  >',
+                    style='CompactAction.TButton',command=lambda:self.show_report_step(3))
+        self.report_continue_interval.pack(side='right',padx=(4,0))
+        self.report_continue_interval.pack_forget()
+        self.report_steps=[ttk.Frame(p) for _ in range(3)]
+        self.reporting_record=tk.StringVar(value='No recording selected')
+
+        # Step 1: choose an existing recording. The user can return here at any time.
+        one=self.report_steps[0]
+        choose=ttk.LabelFrame(one,text='Step 1 — Select Record',padding=18)
+        choose.pack(fill='x',pady=(0,12))
+        header=ttk.Frame(choose);header.pack(fill='x',pady=(0,12))
+        ttk.Label(header,text='Select a record from History to prepare a pressure report.',
+                  foreground='#576677').pack(side='left')
+        self.report_continue_record=ttk.Button(header,text='Continue to Select Interval  >',
+                   style='Accent.TButton',command=lambda:self.show_report_step(2))
+        self.report_continue_record.pack(side='right')
+        selection=ttk.Frame(choose);selection.pack(fill='x')
+        ttk.Label(selection,textvariable=self.reporting_record,font=(UI_FONT,12,'bold')).pack(anchor='w')
+        self.report_history_button=ttk.Button(selection,text='Select a Recording  ▾',
+                   style='CompactAction.TButton',command=self.toggle_report_history)
+        self.report_history_button.pack(anchor='w',pady=(9,0))
+        self.report_history_panel=ttk.Frame(choose)
+        searchbar=ttk.Frame(self.report_history_panel);searchbar.pack(fill='x',pady=(10,7))
+        ttk.Label(searchbar,text='Find recording').pack(side='left',padx=(0,8))
+        self.report_history_search=tk.StringVar(value='')
+        search_entry=ttk.Entry(searchbar,textvariable=self.report_history_search,width=38)
+        search_entry.pack(side='left',fill='x',expand=True,padx=(0,8))
+        search_entry.bind('<KeyRelease>',lambda event:self.refresh_report_history())
+        ttk.Button(searchbar,text='Refresh',style='Compact.TButton',
+                   command=self.refresh_report_history).pack(side='left')
+        columns=('started','well','job','engineer','duration','source','status')
+        table_frame=ttk.Frame(self.report_history_panel);table_frame.pack(fill='both',expand=True)
+        self.report_history_tree=ttk.Treeview(table_frame,columns=columns,show='headings',
+                                               selectmode='browse',height=9)
+        headings={'started':'Started','well':'Well / Recording','job':'Job',
+                  'engineer':'Engineer','duration':'Duration','source':'Source','status':'Status'}
+        widths={'started':165,'well':220,'job':200,'engineer':170,
+                'duration':95,'source':115,'status':100}
+        for col in columns:
+            self.report_history_tree.heading(col,text=headings[col])
+            self.report_history_tree.column(col,width=widths[col],minwidth=75,
+                          anchor='center' if col in ('duration','source','status') else 'w')
+        vscroll=ttk.Scrollbar(table_frame,orient='vertical',command=self.report_history_tree.yview)
+        hscroll=ttk.Scrollbar(table_frame,orient='horizontal',command=self.report_history_tree.xview)
+        self.report_history_tree.configure(yscrollcommand=vscroll.set,xscrollcommand=hscroll.set)
+        table_frame.rowconfigure(0,weight=1);table_frame.columnconfigure(0,weight=1)
+        self.report_history_tree.grid(row=0,column=0,sticky='nsew')
+        vscroll.grid(row=0,column=1,sticky='ns')
+        hscroll.grid(row=1,column=0,sticky='ew')
+        self.report_history_tree.tag_configure('alternate',background='#edf4f6')
+        self.report_history_tree.bind('<<TreeviewSelect>>',self.choose_report_history_record)
+        self.report_history_tree.bind('<Double-1>',self.confirm_report_history_record)
+        self.report_history_count=ttk.Label(self.report_history_panel,text='',foreground='#576677')
+        self.report_history_count.pack(anchor='w',pady=(6,0))
+        self.report_record_status=tk.StringVar(value='')
+        ttk.Label(choose,textvariable=self.report_record_status,foreground='#576677').pack(anchor='w',pady=(12,0))
+
+
+        # Step 2: combined time interval and graph appearance.
+        two=self.report_steps[1]
+        section=ttk.LabelFrame(two,text='Step 2 — Select Interval & Graph Options',padding=14)
+        section.pack(fill='both',expand=True,pady=(0,8))
+        self.report_start=tk.StringVar(value='0')
+        self.report_end=tk.StringVar(value='0')
+        self.report_range_mode=tk.StringVar(value='full')
+        self.report_axis=tk.StringVar(value='Elapsed Time')
+        self.report_unit=tk.StringVar(value=self.settings['unit'])
+        self.report_events=tk.BooleanVar(value=True)
+        self.report_grid=tk.BooleanVar(value=True)
+        self.report_view_xmin=tk.StringVar(value='0')
+        self.report_view_xmax=tk.StringVar(value='0')
+        self.report_ymin=tk.StringVar(value='')
+        self.report_ymax=tk.StringVar(value='')
+
+        # Two clearly separated control columns: horizontal timeline on the left,
+        # vertical pressure scale and appearance on the right.
+        controls=ttk.Frame(section)
+        controls.pack(fill='x',pady=(0,10))
+        controls.columnconfigure(0,weight=3,uniform='reportcols')
+        controls.columnconfigure(1,weight=2,uniform='reportcols')
+        left=ttk.LabelFrame(controls,text='Time Interval & Horizontal Axis',padding=(10,9))
+        right=ttk.LabelFrame(controls,text='Pressure & Graph Display',padding=(10,9))
+        left.grid(row=0,column=0,sticky='nsew',padx=(0,7))
+        right.grid(row=0,column=1,sticky='nsew',padx=(7,0))
+
+        # Time axis stays on the first row, aligned to the upper-right of the left panel.
+        header_left=ttk.Frame(left);header_left.pack(fill='x',pady=(0,11))
+        modes=ttk.Frame(header_left);modes.pack(side='left')
+        axisbar=ttk.Frame(header_left);axisbar.pack(side='right',padx=(12,0))
+        ttk.Label(axisbar,text='Time axis').pack(side='left',padx=(0,6))
+        axis=ttk.Combobox(axisbar,textvariable=self.report_axis,state='readonly',
+                          style='Report.TCombobox',width=14,
+                          values=('Elapsed Time','Date & Time'))
+        axis.pack(side='left')
+        axis.bind('<<ComboboxSelected>>',lambda event:self.update_report_graph_options())
+        ttk.Radiobutton(modes,text='Full Recording',value='full',variable=self.report_range_mode,
+                        command=self.change_report_range_mode).pack(side='left',padx=(0,15))
+        ttk.Radiobutton(modes,text='Select Time Range on Graph',value='custom',
+                        variable=self.report_range_mode,
+                        command=self.change_report_range_mode).pack(side='left')
+
+        bounds=ttk.Frame(left);bounds.pack(fill='x',pady=(0,10))
+        ttk.Label(bounds,text='Interval from (min)').pack(side='left')
+        self.report_from_entry=ttk.Entry(bounds,textvariable=self.report_start,width=10)
+        self.report_from_entry.pack(side='left',padx=(6,13))
+        ttk.Label(bounds,text='To (min)').pack(side='left')
+        self.report_to_entry=ttk.Entry(bounds,textvariable=self.report_end,width=10)
+        self.report_to_entry.pack(side='left',padx=(6,0))
+
+        scale=ttk.Frame(left);scale.pack(fill='x')
+        self.report_xfrom_label=ttk.Label(scale,text='View X from (min)')
+        self.report_xfrom_label.pack(side='left',padx=(0,6))
+        ttk.Entry(scale,textvariable=self.report_view_xmin,width=19).pack(side='left',padx=(0,7))
+        ttk.Label(scale,text='to').pack(side='left',padx=(0,7))
+        ttk.Entry(scale,textvariable=self.report_view_xmax,width=19).pack(side='left')
+
+        unitrow=ttk.Frame(right);unitrow.pack(fill='x',pady=(0,11))
+        ttk.Label(unitrow,text='Pressure unit').pack(side='left',padx=(0,9))
+        unit=ttk.Combobox(unitrow,textvariable=self.report_unit,state='readonly',
+                          style='Report.TCombobox',width=9,
+                          values=('psi','bar','kPa','MPa'))
+        unit.pack(side='left')
+        unit.bind('<<ComboboxSelected>>',lambda event:self.update_report_graph_options())
+        ttk.Checkbutton(unitrow,text='Events',variable=self.report_events,
+                        command=self.update_report_graph_options).pack(side='left',padx=(20,12))
+        ttk.Checkbutton(unitrow,text='Grid',variable=self.report_grid,
+                        command=self.update_report_graph_options).pack(side='left')
+
+        yrange=ttk.Frame(right);yrange.pack(fill='x',pady=(0,11))
+        self.report_y_label=ttk.Label(yrange,text='Y min / max')
+        self.report_y_label.pack(side='left',padx=(0,7))
+        ttk.Entry(yrange,textvariable=self.report_ymin,width=10).pack(side='left',padx=(0,7))
+        ttk.Label(yrange,text='to').pack(side='left',padx=(0,7))
+        ttk.Entry(yrange,textvariable=self.report_ymax,width=10).pack(side='left')
+
+        actions=ttk.Frame(right);actions.pack(fill='x')
+        ttk.Button(actions,text='Apply Scale',style='Compact.TButton',
+                   command=self.apply_report_scale).pack(side='left',padx=(0,8))
+        ttk.Button(actions,text='Reset Zoom',style='Compact.TButton',
+                   command=self.reset_report_zoom).pack(side='left')
+        self.report_pan_mode=tk.BooleanVar(value=False)
+        self.report_pan_button=tk.Canvas(actions,width=30,height=30,bg='#edf3f6',
+            highlightthickness=1,highlightbackground='#9aa9b2',cursor='hand2')
+        self.report_pan_button.pack(side='left',padx=(14,5))
+        self.report_pan_button.bind('<Button-1>',lambda event:self.toggle_report_pan())
+        self.report_pan_text=ttk.Label(actions,text='Pan (off)',cursor='hand2')
+        self.report_pan_text.pack(side='left')
+        self.report_pan_text.bind('<Button-1>',lambda event:self.toggle_report_pan())
+        self.draw_report_pan_icon()
+        self.report_drag_hint=ttk.Label(section,
+            text='Drag to select a reporting interval. Mouse wheel zooms the view without changing the selected interval.',
+            foreground='#576677')
+        # Shown only in manual graph-selection mode.
+        if self.report_range_mode.get()=='custom':
+            self.report_drag_hint.pack(anchor='w',pady=(0,6))
+        self.report_range_chart=ttk.Frame(section)
+        self.report_range_chart.pack(fill='both',expand=True)
+        events_panel=ttk.LabelFrame(section,text='Event List — select an event to locate it on the graph',padding=(8,6))
+        events_panel.pack(fill='x',pady=(8,0))
+        events_toolbar=ttk.Frame(events_panel);events_toolbar.pack(fill='x',pady=(0,5))
+        ttk.Label(events_toolbar,text='Click an event to focus its timestamp; use Set Start / Set End to define the interval.',
+                  foreground='#576677').pack(side='left')
+        ttk.Button(events_toolbar,text='Set End',style='Compact.TButton',
+                   command=lambda:self.set_report_interval_from_event('end')).pack(side='right',padx=(6,0))
+        ttk.Button(events_toolbar,text='Set Start',style='Compact.TButton',
+                   command=lambda:self.set_report_interval_from_event('start')).pack(side='right')
+        event_table=ttk.Frame(events_panel);event_table.pack(fill='x')
+        columns=('number','time','event','pressure')
+        self.report_event_tree=ttk.Treeview(event_table,columns=columns,show='headings',
+                                            height=4,selectmode='browse')
+        for col,title,width in [('number','No.',55),('time','Time',175),
+                                ('event','Event',420),('pressure','Pressure',125)]:
+            self.report_event_tree.heading(col,text=title)
+            self.report_event_tree.column(col,width=width,stretch=col=='event',
+                 anchor='center' if col in ('number','pressure') else 'w')
+        event_scroll=ttk.Scrollbar(event_table,orient='vertical',command=self.report_event_tree.yview)
+        self.report_event_tree.configure(yscrollcommand=event_scroll.set)
+        self.report_event_tree.pack(side='left',fill='x',expand=True)
+        event_scroll.pack(side='right',fill='y')
+        self.report_event_tree.bind('<<TreeviewSelect>>',self.focus_report_event)
+        self.report_event_timestamps={}
+        self.report_range_hint=ttk.Label(self.report_range_chart,text='Select a recording first.',
+                                          foreground='#576677')
+        self.report_range_hint.pack(pady=40)
+        self.report_inline_sid=None
+        self.report_range_canvas=None
+        navigation2=ttk.Frame(two);navigation2.pack(fill='x')
+        ttk.Button(navigation2,text='<  Select Record',style='Compact.TButton',
+                   command=lambda:self.show_report_step(1)).pack(side='left')
+
+        three=self.report_steps[2]
+        ttk.Label(three,text='Step 3 — Preview & Export',font=(UI_FONT,12,'bold')).pack(anchor='w',pady=(0,7))
+        actions=ttk.Frame(three);actions.pack(fill='x',pady=(0,9))
+        ttk.Label(actions,text='Output type:').pack(side='left',padx=(0,10))
+        self.report_format=tk.StringVar(value='pdf')
+        for label,fmt in [('PDF Report','pdf'),('JPEG Graph','jpg'),
+                          ('Excel — Detailed Data','xlsx'),('CSV — Detailed Data','csv')]:
+            ttk.Radiobutton(actions,text=label,value=fmt,variable=self.report_format,
+                            command=self.refresh_reporting).pack(side='left',padx=(0,12))
+        resolution_row=ttk.Frame(three)
+        resolution_row.pack(fill='x',pady=(0,8))
+        self.report_resolution=tk.StringVar(value='all')
+        ttk.Label(resolution_row,text='CSV resolution:').pack(side='left',padx=(0,9))
+        self.report_resolution_picker=ttk.Combobox(resolution_row,textvariable=self.report_resolution,
+            values=['all','0.5 s','1 s','1 min'],state='readonly',width=12)
+        self.report_resolution_picker.pack(side='left')
+        ttk.Label(resolution_row,text='Downsampling retains original readings; no averaging or interpolation.',
+                  foreground='#576677').pack(side='left',padx=(12,0))
+        self.report_resolution_row=resolution_row
+        ttk.Button(actions,text='Export Selected',style='Accent.TButton',
+                   command=lambda:self.export_reporting(self.report_format.get())).pack(side='right')
+        ttk.Button(actions,text='Edit Metadata & Notes',style='Compact.TButton',
+                   command=self.edit_report_metadata).pack(side='right',padx=(0,12))
+        self.report_preview_info=tk.StringVar(value='')
+        self.report_preview_info_label=ttk.Label(three,textvariable=self.report_preview_info,foreground='#576677')
+        self.report_preview_info_label.pack(anchor='w',pady=(0,6))
+        area=ttk.LabelFrame(three,text='Preview',padding=8);area.pack(fill='both',expand=True)
+        self.reporting_canvas=tk.Canvas(area,bg='#e2e8ed',highlightthickness=0)
+        scroll=ttk.Scrollbar(area,orient='vertical',command=self.reporting_canvas.yview)
+        scroll.pack(side='right',fill='y')
+        self.reporting_canvas.pack(side='left',fill='both',expand=True)
+        self.reporting_canvas.configure(yscrollcommand=scroll.set)
+        self.reporting_preview=ttk.Frame(self.reporting_canvas)
+        self.reporting_window=self.reporting_canvas.create_window((0,0),window=self.reporting_preview,anchor='n')
+        self.reporting_preview.bind('<Configure>',lambda e:self.reporting_canvas.configure(scrollregion=self.reporting_canvas.bbox('all')))
+        self.reporting_canvas.bind('<Configure>',self.resize_reporting_preview_viewport)
+        self.reporting_placeholder=ttk.Label(self.reporting_preview,text='Select a recording to preview its report.')
+        self.reporting_placeholder.pack(pady=40)
+        self.reporting_preview_sid=None
+        self.report_range_sid=None
+        self.show_report_step(1,validate=False)
+
+    def edit_report_metadata(self):
+        sid=getattr(self,'reporting_sid',None)
+        session=self.store.get(sid) if sid else None
+        if not session:
+            messagebox.showinfo('Select Record','Select a recording first.',parent=self)
+            return
+        # Flush pending edits from the Live Monitor before loading the same
+        # record into this dialog, so its data cannot be silently overwritten.
+        if getattr(self,'detail_sid',None)==sid and getattr(self,'save_job',None):
+            self.after_cancel(self.save_job)
+            self.save_job=None
+            if not self.save_details():return
+            session=self.store.get(sid)
+        details=json.loads(session['details'])
+        dialog=tk.Toplevel(self)
+        dialog.title('Edit Metadata & Notes')
+        dialog.transient(self)
+        dialog.resizable(True,True)
+        dialog.geometry('610x610')
+        dialog.minsize(460,470)
+        body=ttk.Frame(dialog,padding=20)
+        body.pack(fill='both',expand=True)
+        ttk.Label(body,text='Edit Metadata & Notes',
+                  font=(UI_FONT,15,'bold')).pack(anchor='w',pady=(0,5))
+        ttk.Label(body,text='Changes are saved to the original recording in History.',
+                  foreground='#576677').pack(anchor='w',pady=(0,15))
+        form=ttk.Frame(body)
+        form.pack(fill='both',expand=True)
+        form.columnconfigure(1,weight=1)
+        values={}
+        for index,key in enumerate(FIELDS):
+            ttk.Label(form,text=key.replace('_',' ').title()).grid(
+                row=index,column=0,sticky='nw',padx=(0,14),pady=7)
+            if key=='notes':
+                widget=tk.Text(form,height=6,wrap='word',font=(UI_FONT,10))
+                widget.insert('1.0',details.get(key,''))
+            else:
+                var=tk.StringVar(value=str(details.get(key,'') or ''))
+                values[key]=var
+                widget=ttk.Entry(form,textvariable=var)
+            widget.grid(row=index,column=1,sticky='nsew',pady=5)
+            if key=='notes':notes_widget=widget
+        buttons=ttk.Frame(body)
+        buttons.pack(fill='x',pady=(16,0))
+        def save():
+            updated=dict(details)
+            updated.update({key:var.get() for key,var in values.items()})
+            updated['notes']=notes_widget.get('1.0','end-1c')
+            try:
+                self.store.update(sid,'details',updated)
+            except Exception as exc:
+                messagebox.showerror('Save failed',str(exc),parent=dialog)
+                return
+            if getattr(self,'detail_sid',None)==sid:
+                self.load_details(sid)
+            dialog.destroy()
+            self.refresh_reporting()
+        ttk.Button(buttons,text='Save Changes',style='Accent.TButton',
+                   command=save).pack(side='right')
+        ttk.Button(buttons,text='Cancel',command=dialog.destroy).pack(
+            side='right',padx=(0,10))
+        dialog.grab_set()
+        dialog.focus_set()
+
+    def update_report_history_button(self):
+        """Reflect selection and expanded/collapsed state independently."""
+        if self.report_history_panel.winfo_manager():
+            label='Hide Recordings  ▴'
+            style='Compact.TButton'
+        elif getattr(self,'reporting_sid',None) and self.store.get(self.reporting_sid):
+            label='Change Recording  ▾'
+            style='Compact.TButton'
+        else:
+            label='Select a Recording  ▾'
+            style='CompactAction.TButton'
+        self.report_history_button.configure(text=label,style=style)
+
+    def toggle_report_history(self):
+        if self.report_history_panel.winfo_manager():
+            self.report_history_panel.pack_forget()
+        else:
+            self.refresh_report_history()
+            self.report_history_panel.pack(fill='both',expand=True,pady=(6,0))
+        self.update_report_history_button()
+
+    def refresh_report_history(self):
+        tree=self.report_history_tree
+        previous=tree.selection()
+        previous=previous[0] if previous else getattr(self,'reporting_sid',None)
+        for item in tree.get_children():tree.delete(item)
+        records=self.store.sessions(self.report_history_search.get().strip())
+        for index,session in enumerate(records):
+            details=json.loads(session['details'])
+            finish=session['ended'] or self.store.stats(session['id'])['last'] or session['started']
+            minutes,seconds=divmod(int(max(0,finish-session['started'])),60)
+            offset=json.loads(session['settings']).get('utc_offset',8)
+            tree.insert('','end',iid=session['id'],
+                tags=('alternate',) if index%2 else (),
+                values=(stamp(session['started'],offset)[:19].replace('T',' '),
+                        details.get('well') or session['name'],
+                        details.get('job') or '—',
+                        details.get('engineer') or '—',
+                        f'{minutes}m {seconds:02d}s',session['mode'],session['state']))
+        self.report_history_count.configure(text=f'{len(records)} recording(s) found • Click a row to select')
+        if previous and tree.exists(previous):
+            tree.selection_set(previous)
+            tree.see(previous)
+
+    def choose_report_history_record(self,event=None):
+        selected=self.report_history_tree.selection()
+        if not selected:return
+        sid=selected[0]
+        session=self.store.get(sid)
+        if not session:return
+        if sid!=getattr(self,'reporting_sid',None):
+            self.reporting_sid=sid
+            self.report_range_mode.set('full')
+            self.report_range_sid=None
+            self.report_inline_sid=None
+            self.report_range_canvas=None
+            self.refresh_reporting()
+        self.report_continue_record.configure(state='normal')
+    def confirm_report_history_record(self,event=None):
+        # A double-click selects the row and immediately advances to Step 2.
+        if event is not None:
+            row=self.report_history_tree.identify_row(event.y)
+            if not row:return
+            self.report_history_tree.selection_set(row)
+        self.choose_report_history_record()
+        if getattr(self,'reporting_sid',None):
+            self.show_report_step(2)
+
+    def show_report_step(self,step,validate=True):
+        if step not in (1,2,3):return
+        sid=getattr(self,'reporting_sid',None)
+        if step>1 and (not sid or not self.store.get(sid)):
+            messagebox.showinfo('Select Record','Choose a recording from History first.',parent=self)
+            step=1
+        elif step==3 and validate:
+            try:self.get_report_range();self.get_report_y_limits()
+            except ValueError as exc:
+                messagebox.showerror('Report options',str(exc),parent=self)
+                step=2
+        for frame in self.report_steps:frame.pack_forget()
+        self.report_step=step
+        self.report_steps[step-1].pack(fill='both',expand=True)
+        if step==2:self.report_continue_interval.pack(side='right',padx=(4,0))
+        else:self.report_continue_interval.pack_forget()
+        for index,button in enumerate(self.report_step_buttons,1):
+            active=index==step
+            button.configure(bg=TEAL if active else SURFACE,fg='white' if active else INK,
+                             activebackground=TEAL_DARK if active else PALE_TEAL,
+                             activeforeground='white' if active else INK,highlightthickness=0)
+        self.report_continue_record.configure(state='normal' if sid and self.store.get(sid) else 'disabled')
+        if step==1:
+            self.refresh_reporting()
+        if step==2:self.refresh_inline_range_graph()
+        if step==3:self.refresh_reporting()
+
+    def open_reporting(self,sid):
+        if not sid or not self.store.get(sid):
+            messagebox.showwarning('Reporting','Please select a valid recording.',parent=self)
+            return
+        self.reporting_sid=sid
+        self.report_range_mode.set('full')
+        self.report_range_sid=None
+        self.report_inline_sid=None
+        self.report_range_canvas=None
+        self.refresh_reporting()
+        self.show_report_step(1,validate=False)
+        self.show('Reporting')
+
+    def refresh_reporting(self):
+        if hasattr(self,'report_resolution_row'):
+            if self.report_format.get() == 'csv':
+                self.report_resolution_row.pack(fill='x',pady=(0,8),before=self.report_preview_info_label)
+            else:
+                self.report_resolution_row.pack_forget()
+        sid=getattr(self,'reporting_sid',None)
+        session=self.store.get(sid) if sid else None
+        if not session:
+            self.reporting_sid=None
+            self.reporting_record.set('No recording selected')
+            self.report_record_status.set('No recording chosen yet.')
+            self.update_report_history_button()
+            return
+        details=json.loads(session['details'])
+        self.reporting_record.set((details.get('well') or session['name'])+'  |  '+(details.get('job') or 'Recording'))
+        self.report_record_status.set('Source: '+session['mode']+'   •   Started: '+stamp(session['started'],json.loads(session['settings']).get('utc_offset',8)).replace('T',' ')[:19])
+        self.update_report_history_button()
+        if self.report_range_sid!=sid:self.reset_report_range()
+        try:time_range=self.get_report_range()
+        except ValueError as exc:
+            messagebox.showerror('Time range',str(exc),parent=self);return
+        if self.report_step!=3:return
+        try:y_limits=self.get_report_y_limits()
+        except ValueError as exc:
+            messagebox.showerror('Graph scale',str(exc),parent=self);return
+        # Recreate on each visit so edits to notes/events are reflected.
+        for child in self.reporting_preview.winfo_children():child.destroy()
+        self.reporting_figure_canvas=None
+        self.reporting_figure=None
+        try:
+            fmt=self.report_format.get()
+            self.report_preview_info.set('PDF report preview' if fmt=='pdf' else
+                'JPEG graph — export directly' if fmt=='jpg' else
+                'Detailed recorded data — export directly')
+            if fmt!='pdf':
+                ttk.Label(self.reporting_preview,text='Preview not available',
+                          font=(UI_FONT,15,'bold'),foreground=INK).pack(padx=24,pady=(48,10))
+                description=('Export the JPEG to view the graph.' if fmt=='jpg' else
+                             'Excel and CSV exports contain detailed data points within the selected interval.')
+                ttk.Label(self.reporting_preview,text=description,
+                          foreground='#576677').pack(padx=24,pady=(0,48))
+                return
+            pages=report_figures(self.store,sid,self.report_unit.get(),time_range,
+                                 self.report_axis.get(),self.report_events.get(),
+                                 self.report_grid.get(),y_limits)
+            self.reporting_figure=pages[0]
+            self.reporting_figure_canvas=None
+            for page_number,fig in enumerate(pages,1):
+                if page_number>1:
+                    ttk.Label(self.reporting_preview,text=f'Page {page_number} of {len(pages)}',
+                              font=(UI_FONT,10,'bold')).pack(pady=(14,0))
+                canvas=FigureCanvasTkAgg(fig,master=self.reporting_preview)
+                canvas.get_tk_widget().pack(padx=12,pady=12)
+                if page_number==1:self.reporting_figure_canvas=canvas
+                canvas.draw()
+        except Exception as exc:
+            ttk.Label(self.reporting_preview,text='Preview unavailable: '+str(exc)).pack(pady=30)
+
+    def resize_reporting_preview_viewport(self,event=None):
+        width=max(1,self.reporting_canvas.winfo_width())
+        self.reporting_canvas.coords(self.reporting_window,width/2,0)
+
+    def draw_report_pan_icon(self):
+        c=self.report_pan_button;c.delete('all')
+        active=self.report_pan_mode.get()
+        color='white' if active else '#17334c'
+        c.configure(bg=TEAL if active else '#edf3f6')
+        c.create_line(15,4,15,26,fill=color,width=2)
+        c.create_line(4,15,26,15,fill=color,width=2)
+        for points in ((15,3,11,9,19,9),(15,27,11,21,19,21),
+                       (3,15,9,11,9,19),(27,15,21,11,21,19)):
+            c.create_polygon(*points,fill=color,outline=color)
+        self.report_pan_text.configure(text='Pan (on)' if active else 'Pan (off)')
+
+    def toggle_report_pan(self):
+        self.report_pan_mode.set(not self.report_pan_mode.get())
+        self.draw_report_pan_icon()
+        if getattr(self,'report_range_canvas',None):
+            self.report_range_selector.set_active(
+                not self.report_pan_mode.get() and self.report_range_mode.get()=='custom')
+            self.report_range_canvas.get_tk_widget().configure(
+                cursor='fleur' if self.report_pan_mode.get() else '')
+
+    def change_report_range_mode(self):
+        custom=self.report_range_mode.get()=='custom'
+        if not custom and getattr(self,'report_range_sid',None):
+            self.reset_report_range()
+        if hasattr(self,'report_from_entry'):
+            for widget in (self.report_from_entry,self.report_to_entry):
+                widget.configure(state='normal' if custom else 'disabled')
+        if hasattr(self,'report_drag_hint'):
+            if custom:
+                if not self.report_drag_hint.winfo_manager():
+                    self.report_drag_hint.pack(anchor='w',pady=(0,6),before=self.report_range_chart)
+            else:
+                self.report_drag_hint.pack_forget()
+        if getattr(self,'report_range_canvas',None):
+            self.report_range_selector.set_active(custom and not self.report_pan_mode.get())
+            if not custom:
+                # Clear the SpanSelector's own selection overlay, not just our shading.
+                self.report_range_selector.clear()
+            self.report_range_selector.set_visible(custom)
+            self.report_range_shade.set_visible(custom)
+            self.report_excluded_left.set_visible(custom)
+            self.report_excluded_right.set_visible(custom)
+            self.report_range_left.set_visible(custom)
+            self.report_range_right.set_visible(custom)
+            self.report_range_canvas.draw_idle()
+
+    def refresh_inline_range_graph(self):
+        sid=getattr(self,'reporting_sid',None)
+        session=self.store.get(sid) if sid else None
+        if not session:return
+        if self.report_range_sid!=sid:self.reset_report_range()
+        if self.report_inline_sid==sid:return
+        self.report_ymin.set('');self.report_ymax.set('')
+        from matplotlib.widgets import SpanSelector
+        from matplotlib.ticker import MaxNLocator
+        rows=self.store.plot_rows(sid)
+        if not rows:return
+        for widget in self.report_range_chart.winfo_children():widget.destroy()
+        start=session['started']
+        end=session['ended'] or self.store.stats(sid)['last'] or rows[-1]['ts']
+        duration=max((end-start)/60,.001)
+        fig=Figure(figsize=(10,4),dpi=100,facecolor='white')
+        ax=fig.add_subplot(111)
+        fig.subplots_adjust(left=.07,right=.98,top=.95,bottom=.17)
+        self.report_graph_rows=rows
+        self.report_graph_start=start
+        self.report_graph_offset=json.loads(session['settings']).get('utc_offset',8)
+        self.report_graph_line,=ax.plot([],[],color=TEAL,lw=1.2)
+        apply_report_time_scale(ax,0,duration)
+        ax.set_ylabel('Pressure ('+self.report_unit.get()+')')
+        ax.set_xlabel('Elapsed time (minutes)')
+        apply_engineering_grid(ax)
+        self.report_graph_events=self.store.events(sid)
+        self.populate_report_events(sid)
+        self.report_graph_event_artists=[]
+        canvas=FigureCanvasTkAgg(fig,master=self.report_range_chart)
+        canvas.get_tk_widget().pack(fill='both',expand=True)
+        self.report_range_shade=ax.axvspan(0,duration,color='#44b99f',alpha=.28)
+        self.report_excluded_left=ax.axvspan(0,0,color='#8a929b',alpha=.48)
+        self.report_excluded_right=ax.axvspan(duration,duration,color='#8a929b',alpha=.48)
+        self.report_range_axes=ax
+        self.report_range_duration=duration
+        self.report_range_left=ax.axvline(0,color=TEAL,lw=1.5,ls='--')
+        self.report_range_right=ax.axvline(duration,color=TEAL,lw=1.5,ls='--')
+        def redraw(lo,hi):
+            # axvspan returns Rectangle patches in current Matplotlib versions.
+            # Update the origin and width, rather than passing polygon vertices to set_xy.
+            self.report_range_shade.set_x(lo)
+            self.report_range_shade.set_width(hi-lo)
+            self.report_excluded_left.set_x(0)
+            self.report_excluded_left.set_width(lo)
+            self.report_excluded_right.set_x(hi)
+            self.report_excluded_right.set_width(duration-hi)
+            self.report_range_left.set_xdata([lo,lo])
+            self.report_range_right.set_xdata([hi,hi])
+            canvas.draw_idle()
+        def selected(lo,hi):
+            lo=max(0,min(duration,lo));hi=max(0,min(duration,hi))
+            if hi-lo<.001:return
+            self.report_start.set(f'{lo:.3f}')
+            self.report_end.set(f'{hi:.3f}')
+            redraw(lo,hi)
+        self.report_range_selector=SpanSelector(ax,selected,'horizontal',useblit=True,
+                            interactive=True,drag_from_anywhere=True,
+                            props=dict(facecolor=TEAL,alpha=.12))
+        def sync_fields(*_):
+            if self.report_range_mode.get()!='custom':return
+            try:
+                lo=float(self.report_start.get());hi=float(self.report_end.get())
+                if 0<=lo<hi<=duration+.002:redraw(lo,hi)
+            except ValueError:pass
+        self.report_start.trace_add('write',sync_fields)
+        self.report_end.trace_add('write',sync_fields)
+        def wheel(event):
+            if event.inaxes is not ax or event.xdata is None:return
+            lo,hi=ax.get_xlim()
+            factor=.8 if event.button=='up' else 1.25
+            span=max(.01,min(duration,(hi-lo)*factor))
+            center=max(span/2,min(duration-span/2,event.xdata))
+            ax.set_xlim(center-span/2,center+span/2)
+            self.set_report_x_view_fields(*ax.get_xlim())
+            canvas.draw_idle()
+        pan_state={'origin':None}
+        def pan_press(event):
+            if not self.report_pan_mode.get() or event.inaxes is not ax or event.button!=1:return
+            pan_state['origin']=(event.x,event.y,ax.get_xlim(),ax.get_ylim())
+        def pan_move(event):
+            if not self.report_pan_mode.get() or pan_state['origin'] is None:return
+            x0,y0,(xmin,xmax),(ymin,ymax)=pan_state['origin']
+            dx=(event.x-x0)*(xmax-xmin)/max(1,ax.bbox.width)
+            dy=(event.y-y0)*(ymax-ymin)/max(1,ax.bbox.height)
+            width=xmax-xmin
+            left=max(0,min(duration-width,xmin-dx))
+            ax.set_xlim(left,left+width)
+            ax.set_ylim(ymin-dy,ymax-dy)
+            self.set_report_x_view_fields(*ax.get_xlim())
+            self.report_ymin.set(f'{ax.get_ylim()[0]:.3f}')
+            self.report_ymax.set(f'{ax.get_ylim()[1]:.3f}')
+            canvas.draw_idle()
+        def pan_release(event):pan_state['origin']=None
+        canvas.mpl_connect('button_press_event',pan_press)
+        canvas.mpl_connect('motion_notify_event',pan_move)
+        canvas.mpl_connect('button_release_event',pan_release)
+        canvas.mpl_connect('scroll_event',wheel)
+        self.report_range_canvas=canvas
+        self.report_inline_sid=sid
+        self.set_report_x_view_fields(*ax.get_xlim())
+        self.update_report_graph_options()
+        self.change_report_range_mode()
+        canvas.draw()
+
+    def populate_report_events(self,sid):
+        tree=self.report_event_tree
+        for row in tree.get_children():tree.delete(row)
+        self.report_event_timestamps={}
+        unit=self.report_unit.get()
+        with self.store.connect() as db:
+            for number,event in enumerate(self.report_graph_events,1):
+                ts=event['ts']
+                nearest=db.execute(
+                    "SELECT value FROM samples WHERE session=? AND quality='OK' AND value IS NOT NULL "
+                    "ORDER BY ABS(ts-?) LIMIT 1",(sid,ts)).fetchone()
+                psi=nearest['value'] if nearest else None
+                pressure=f"{from_psi(psi,unit):,.2f} {unit}" if psi is not None else 'N/A'
+                local=stamp(ts,self.report_graph_offset).replace('T',' ')[:19]
+                tree.insert('','end',iid=str(event['id']),
+                    values=(number,local,event['label'],pressure))
+                self.report_event_timestamps[str(event['id'])]=(ts,psi)
+
+    def update_report_event_pressures(self):
+        if not hasattr(self,'report_event_tree'):return
+        unit=self.report_unit.get()
+        for iid,(ts,psi) in self.report_event_timestamps.items():
+            if self.report_event_tree.exists(iid):
+                self.report_event_tree.set(iid,'pressure',
+                    f'{from_psi(psi,unit):,.2f} {unit}' if psi is not None else 'N/A')
+
+    def focus_report_event(self,event=None):
+        chosen=self.report_event_tree.selection()
+        if not chosen or not getattr(self,'report_range_canvas',None):return
+        ts,_=self.report_event_timestamps[chosen[0]]
+        x=(ts-self.report_graph_start)/60
+        ax=self.report_range_axes
+        width=max(.15,min(self.report_range_duration,ax.get_xlim()[1]-ax.get_xlim()[0]))
+        lo=max(0,min(self.report_range_duration-width,x-width/2))
+        ax.set_xlim(lo,lo+width)
+        self.set_report_x_view_fields(lo,lo+width)
+        self.report_range_canvas.draw_idle()
+
+    def set_report_interval_from_event(self,bound):
+        chosen=self.report_event_tree.selection()
+        if not chosen:
+            messagebox.showinfo('Event List','Select an event first.',parent=self);return
+        ts,_=self.report_event_timestamps[chosen[0]]
+        minute=max(0,min(self.report_range_duration,(ts-self.report_graph_start)/60))
+        self.report_range_mode.set('custom')
+        if bound=='start':
+            self.report_start.set(f'{minute:.3f}')
+            if float(self.report_end.get())<=minute:
+                self.report_end.set(f'{self.report_range_duration:.3f}')
+        else:
+            self.report_end.set(f'{minute:.3f}')
+            if float(self.report_start.get())>=minute:
+                self.report_start.set('0')
+        self.change_report_range_mode()
+
+    def format_report_x_view(self,minutes):
+        if self.report_axis.get()!='Date & Time':return f'{minutes:.3f}'
+        from datetime import datetime
+        return datetime.fromisoformat(stamp(self.report_graph_start+minutes*60,
+                    self.report_graph_offset)).strftime('%Y-%m-%d %H:%M:%S')
+
+    def parse_report_x_view(self,value):
+        if self.report_axis.get()!='Date & Time':return float(value)
+        from datetime import datetime
+        dt=datetime.strptime(value.strip(),'%Y-%m-%d %H:%M:%S')
+        return max(0.0,min(self.report_range_duration,(dt.timestamp()-self.report_graph_start)/60))
+
+    def set_report_x_view_fields(self,lo,hi):
+        self.report_view_xmin.set(self.format_report_x_view(lo))
+        self.report_view_xmax.set(self.format_report_x_view(hi))
+
+    def update_report_graph_options(self):
+        """Update the Step 2 chart in place; never change selected timestamps."""
+        if not getattr(self,'report_range_canvas',None) or self.report_inline_sid!=getattr(self,'reporting_sid',None):
+            return
+        from matplotlib.ticker import FuncFormatter,MaxNLocator
+        ax=self.report_range_axes
+        prior_xlim=ax.get_xlim()
+        unit=self.report_unit.get()
+        values=[from_psi(r['value'],unit) if r['quality']=='OK' and r['value'] is not None else math.nan
+                for r in self.report_graph_rows]
+        xs=[(r['ts']-self.report_graph_start)/60 for r in self.report_graph_rows]
+        self.report_graph_line.set_data(xs,values)
+        ax.set_ylabel(f'Pressure ({unit})')
+        self.report_y_label.configure(text=f'Y min / max ({unit})')
+        self.update_report_event_pressures()
+        for artist in self.report_graph_event_artists:artist.remove()
+        self.report_graph_event_artists=[]
+        if self.report_events.get():
+            for event in self.report_graph_events:
+                x=(event['ts']-self.report_graph_start)/60
+                self.report_graph_event_artists.append(ax.axvline(x,color='#bb852c',ls='--',lw=.8,alpha=.8))
+        if self.report_axis.get()=='Date & Time':
+            self.report_xfrom_label.configure(text='View X from (date/time)')
+            ax.xaxis.set_major_formatter(FuncFormatter(
+                lambda x,pos:__import__('datetime').datetime.fromisoformat(stamp(self.report_graph_start+x*60,self.report_graph_offset)).strftime('%d %b\n%H:%M:%S')))
+            ax.set_xlabel('Date & time (Computer local time)')
+        else:
+            self.report_xfrom_label.configure(text='View X from (min)')
+            ax.xaxis.set_major_formatter(FuncFormatter(lambda x,pos:f'{x:g}'))
+            ax.set_xlabel('Elapsed time (minutes)')
+        apply_engineering_grid(ax, self.report_grid.get())
+        ax.relim()
+        if not self.report_ymin.get().strip() and not self.report_ymax.get().strip():
+            ax.autoscale(axis='y')
+        else:
+            try:ax.set_ylim(*self.get_report_y_limits())
+            except ValueError:pass
+        apply_pressure_grid(ax,*ax.get_ylim())
+        ax.set_xlim(*prior_xlim)
+        self.set_report_x_view_fields(*prior_xlim)
+        self.report_range_canvas.draw_idle()
+
+    def apply_report_scale(self):
+        if not getattr(self,'report_range_canvas',None):return
+        try:
+            xmin=self.parse_report_x_view(self.report_view_xmin.get());xmax=self.parse_report_x_view(self.report_view_xmax.get())
+            if not (math.isfinite(xmin) and math.isfinite(xmax) and 0<=xmin<xmax<=self.report_range_duration+.002):
+                raise ValueError('X limits must be within the recording.')
+            y_limits=self.get_report_y_limits()
+        except ValueError as exc:
+            messagebox.showerror('Graph scale',str(exc),parent=self);return
+        ax=self.report_range_axes
+        ax.set_xlim(xmin,xmax)
+        if y_limits:ax.set_ylim(*y_limits)
+        else:ax.relim();ax.autoscale(axis='y')
+        self.report_range_canvas.draw_idle()
+
+    def reset_report_zoom(self):
+        if not getattr(self,'report_range_canvas',None):return
+        apply_report_time_scale(self.report_range_axes,0,self.report_range_duration)
+        self.set_report_x_view_fields(*self.report_range_axes.get_xlim())
+        self.report_ymin.set('');self.report_ymax.set('')
+        self.apply_report_scale()
+
+    def get_report_y_limits(self):
+        low=self.report_ymin.get().strip();high=self.report_ymax.get().strip()
+        if not low and not high:return None
+        if not low or not high:raise ValueError('Enter both Y scale limits or clear both.')
+        try:a=float(low);b=float(high)
+        except ValueError:raise ValueError('Y scale limits must be numbers.')
+        if not (math.isfinite(a) and math.isfinite(b) and a<b):
+            raise ValueError('Y minimum must be smaller than Y maximum.')
+        return a,b
+
+    def reset_report_and_preview(self):
+        self.reset_report_range()
+        self.refresh_reporting()
+
+    def reset_report_range(self):
+        sid=getattr(self,'reporting_sid',None)
+        session=self.store.get(sid) if sid else None
+        if not session:return
+        end=session['ended'] or self.store.stats(sid)['last'] or session['started']
+        self.report_start.set('0')
+        self.report_end.set(f'{max((end-session["started"])/60,0.001):.3f}')
+        self.report_range_sid=sid
+
+    def get_report_range(self):
+        sid=getattr(self,'reporting_sid',None)
+        session=self.store.get(sid) if sid else None
+        if not session:raise ValueError('Select a recording first')
+        try:
+            start=float(self.report_start.get())
+            end=float(self.report_end.get())
+        except ValueError:raise ValueError('Enter valid numeric start and end minutes')
+        duration=max(0,((session['ended'] or self.store.stats(sid)['last'] or session['started'])-session['started'])/60)
+        if not (math.isfinite(start) and math.isfinite(end) and 0<=start<end<=duration+.002):
+            raise ValueError(f'Time range must satisfy 0 <= From < To <= {duration:.3f} minutes')
+        return (session['started']+start*60,session['started']+end*60)
+
+    def export_reporting(self,fmt):
+        sid=getattr(self,'reporting_sid',None)
+        session=self.store.get(sid) if sid else None
+        if not session:
+            messagebox.showwarning('Reporting','Select a recording first.',parent=self);return
+        if self.exporting:
+            messagebox.showinfo('Export','Wait for the current export to finish.',parent=self);return
+        suffix='jpg' if fmt=='jpg' else fmt
+        path=filedialog.asksaveasfilename(parent=self,defaultextension='.'+suffix,
+            initialfile=report_name(session)+'.'+suffix,
+            filetypes=[('PDF report','*.pdf')] if fmt=='pdf' else [('JPEG image','*.jpg')] if fmt=='jpg' else [('Excel workbook','*.xlsx')] if fmt=='xlsx' else [('CSV data','*.csv')])
+        if not path:return
+        self.exporting=True
+        self.footer.config(text='Exporting '+fmt.upper()+'...')
+        unit=self.report_unit.get()
+        try:time_range=self.get_report_range()
+        except ValueError as exc:
+            self.exporting=False
+            messagebox.showerror('Time range',str(exc),parent=self);return
+        axis_mode=self.report_axis.get()
+        try:y_limits=self.get_report_y_limits()
+        except ValueError as exc:
+            self.exporting=False
+            messagebox.showerror('Graph scale',str(exc),parent=self);return
+        show_events=self.report_events.get();show_grid=self.report_grid.get()
+        resolution={'all':None,'0.5 s':0.5,'1 s':1.0,'1 min':60.0}[self.report_resolution.get()]
+        def work():
+            try:
+                if fmt in ('pdf','jpg'):
+                    from pathlib import Path
+                    target=Path(path)
+                    temp=target.with_name(target.stem+'.partial'+target.suffix)
+                    try:
+                        if fmt=='pdf':
+                            from matplotlib.backends.backend_pdf import PdfPages
+                            pages=report_figures(self.store,sid,unit,time_range,axis_mode,
+                                                 show_events,show_grid,y_limits)
+                            with PdfPages(temp) as pdf:
+                                for page in pages:
+                                    pdf.savefig(page,dpi=180,facecolor='white')
+                        else:
+                            fig=graph_figure(self.store,sid,unit,time_range,axis_mode,
+                                             show_events,show_grid,y_limits)
+                            fig.savefig(temp,format='jpeg',dpi=180,facecolor='white')
+                        temp.replace(target)
+                    finally:temp.unlink(missing_ok=True)
+                else:
+                    export(self.store,sid,path,{'xmin':(time_range[0]-session['started'])/60,'xmax':(time_range[1]-session['started'])/60},True,resolution=resolution if fmt=='csv' else None)
+                self.engine.emit('exported',path=path)
+            except Exception as exc:
+                self.engine.emit('export_error',text='Export failed: '+str(exc))
+        threading.Thread(target=work,daemon=True).start()
+
+    def review_reporting_record(self):
+        sid=getattr(self,'reporting_sid',None)
+        if sid and self.store.get(sid):self.load_viewer(sid)
+        else:self.show('History')
+
     def make_settings(self):
-        p=self.pages['Settings']; ttk.Label(p,text='Settings',style='Title.TLabel').pack(anchor='w',pady=8)
+        # Keep every setting reachable when the window is narrow or display scaling is high.
+        host=self.pages['Settings']
+        canvas=tk.Canvas(host,bg=BG,highlightthickness=0)
+        scrollbar=ttk.Scrollbar(host,orient='vertical',command=canvas.yview)
+        scrollbar.pack(side='right',fill='y')
+        canvas.pack(side='left',fill='both',expand=True)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        p=ttk.Frame(canvas,padding=(4,4,12,16))
+        window=canvas.create_window((0,0),window=p,anchor='nw')
+        p.bind('<Configure>',lambda e:canvas.configure(scrollregion=canvas.bbox('all')))
+        canvas.bind('<Configure>',lambda e:canvas.itemconfigure(window,width=e.width))
+        self.settings_canvas=canvas
+        ttk.Label(p,text='Settings',style='Title.TLabel').pack(anchor='w',pady=8)
         ttk.Label(p,text='Connection and unit changes apply after reconnecting. Stop recording before applying settings.').pack(anchor='w')
-        grid=ttk.Frame(p); grid.pack(anchor='w',pady=18); self.config_vars={}
-        choices={'mode':['Simulation','Modbus RTU'],'baud':[2400,4800,9600,19200],'parity':['E','N','O'],'stopbits':[1,2],'interval':[.5,1,.2,.1],'unit':['psi','bar','kPa','MPa'],'utc_offset':[7,8,0]}
-        for n,k in enumerate(['mode','port','baud','parity','stopbits','address','interval','unit','utc_offset']):
-            ttk.Label(grid,text=k.replace('_',' ').title()).grid(row=n,column=0,sticky='w',padx=8,pady=8)
-            v=tk.StringVar(value=str(self.settings[k])); self.config_vars[k]=v
-            if k in choices:en=ttk.Combobox(grid,textvariable=v,values=choices[k],state='readonly',width=30)
-            else:en=ttk.Entry(grid,textvariable=v,width=32)
-            en.grid(row=n,column=1,sticky='ew')
-        ttk.Button(grid,text='Find COM ports',command=self.find_ports).grid(row=1,column=2,padx=10)
-        self.auto=tk.BooleanVar(value=self.settings['auto_connect']); ttk.Checkbutton(p,text='Auto-connect last configuration at startup',variable=self.auto).pack(anchor='w',pady=8)
-        ttk.Label(p,text='Hardware profile: PMS-970  |  FC03  |  address 0x0001  |  readout + status\nUnit labels must match the meter; this version does not convert pressure units.\nHardware connection has not yet been validated.\n\nData: '+str(DATA),wraplength=900).pack(anchor='w',pady=12)
-        ttk.Button(p,text='Save and reconnect',command=self.apply_settings,style='Accent.TButton').pack(anchor='w')
+        columns=ttk.Frame(p);columns.pack(fill='both',expand=True,pady=(12,8))
+        self.settings_columns=columns
+        columns.columnconfigure(0,weight=3);columns.columnconfigure(1,weight=2)
+        grid=ttk.LabelFrame(columns,text='Device connection',padding=14)
+        grid.grid(row=0,column=0,sticky='nsew',padx=(0,8),pady=(0,10))
+        display=ttk.LabelFrame(columns,text='Acquisition & display',padding=14)
+        display.grid(row=1,column=0,sticky='nsew',padx=(0,8))
+        actions=ttk.LabelFrame(columns,text='Connection preferences & actions',padding=14)
+        actions.grid(row=0,column=1,rowspan=2,sticky='nsew',padx=(8,0),pady=(0,10))
+        self.settings_device=grid;self.settings_display=display;self.settings_actions=actions
+        grid.columnconfigure(1,weight=1);display.columnconfigure(1,weight=1)
+        self.config_vars={}
+        choices={'mode':['Simulation','Modbus RTU'],'baud':[2400,4800,9600,19200],
+                 'parity':['E','N','O'],'stopbits':[1,2],'interval':[.5,1,.2,.1],
+                 'unit':['psi','bar','kPa','MPa'],'pressure_multiplier':['1','1000']}
+        self.config_vars={}
+        for key in ('mode','port','baud','parity','stopbits','address','interval','unit','pressure_multiplier'):
+            value=self.settings.get(key,DEFAULTS.get(key,''))
+            self.config_vars[key]=tk.StringVar(value=str(value))
+        ttk.Label(grid,text='Mode').grid(row=0,column=0,sticky='w',padx=(0,12),pady=5)
+        mode_combo=ttk.Combobox(grid,textvariable=self.config_vars['mode'],values=choices['mode'],state='readonly',width=32,style='SettingsWhite.TCombobox')
+        mode_combo.grid(row=0,column=1,sticky='ew',pady=4)
+        ttk.Label(grid,text='Port').grid(row=1,column=0,sticky='w',padx=(0,12),pady=5)
+        self.port_combo=ttk.Combobox(grid,textvariable=self.config_vars['port'],state='readonly',width=32,style='SettingsWhite.TCombobox')
+        self.port_combo.grid(row=1,column=1,sticky='ew',pady=4)
+        port_actions=ttk.Frame(grid)
+        port_actions.grid(row=1,column=2,sticky='w',padx=10)
+        ttk.Button(port_actions,text='Refresh ports',command=self.find_ports).pack(side='left')
+        self.port_count=ttk.Label(port_actions)
+        self.port_count.pack(side='left',padx=(8,0))
+
+        ttk.Label(grid,text='Device configuration',font=(UI_FONT,10,'bold')).grid(row=2,column=0,columnspan=3,sticky='w',pady=(14,6))
+        cards=ttk.Frame(grid)
+        cards.grid(row=3,column=0,columnspan=3,sticky='ew')
+        cards.columnconfigure(0,weight=1,uniform='profiles')
+        cards.columnconfigure(1,weight=1,uniform='profiles')
+        self.device_profile=tk.StringVar(value=self.settings.get('device_profile','auto_pms970'))
+        auto_card=ttk.LabelFrame(cards,text='Auto (PMS-970)',padding=12)
+        auto_card.grid(row=0,column=0,sticky='nsew',padx=(0,7))
+        manual_card=ttk.LabelFrame(cards,text='Manual (Custom)',padding=12)
+        manual_card.grid(row=0,column=1,sticky='nsew',padx=(7,0))
+        ttk.Radiobutton(auto_card,text='Use PMS-970 preset',variable=self.device_profile,value='auto_pms970',
+                        command=self.update_device_profile).pack(anchor='w',pady=(0,5))
+        ttk.Label(auto_card,text='Recommended communication settings for Aplisens PMS-970.',
+                  wraplength=300,justify='left').pack(anchor='w',pady=(0,8))
+        # Bundled PMS-970P photograph: no network request or runtime cache.
+        self.pms_profile_image=ImageTk.PhotoImage(gauge_image(94),master=self)
+        try:
+            resource_root=Path(getattr(sys,'_MEIPASS',Path(__file__).parent))
+            with Image.open(resource_root/'assets'/'pms970p.jpg') as photo:
+                thumbnail=photo.convert('RGB')
+                thumbnail.thumbnail((190,115),Image.Resampling.LANCZOS)
+                self.pms_profile_image=ImageTk.PhotoImage(thumbnail,master=self)
+        except (OSError,ValueError):
+            pass
+        ttk.Label(auto_card,image=self.pms_profile_image).pack(anchor='w',pady=(0,6))
+        ttk.Label(auto_card,text='9600 baud  |  E (Even)  |  2 stop bits\nSlave address: 1',
+                  justify='left',font=(UI_FONT,10,'bold')).pack(anchor='w',pady=(0,5))
+        ttk.Label(auto_card,text='Preset profile; no device auto-detection.',foreground='#576677',
+                  wraplength=300).pack(anchor='w')
+        ttk.Radiobutton(manual_card,text='Configure communication manually',variable=self.device_profile,
+                        value='manual',command=self.update_device_profile).grid(row=0,column=0,columnspan=2,sticky='w',pady=(0,7))
+        self.manual_profile_inputs=[]
+        for idx,key in enumerate(('baud','parity','stopbits','address')):
+            ttk.Label(manual_card,text={'baud':'Baud rate','parity':'Parity','stopbits':'Stop bits','address':'Address'}[key]).grid(row=idx+1,column=0,sticky='w',padx=(0,8),pady=5)
+            if key in choices:
+                widget=ttk.Combobox(manual_card,textvariable=self.config_vars[key],values=choices[key],
+                                    state='readonly',width=12,style='SettingsGrey.TCombobox')
+            else:
+                widget=ttk.Entry(manual_card,textvariable=self.config_vars[key],width=14,style='SettingsGrey.TEntry')
+            widget.grid(row=idx+1,column=1,sticky='ew',pady=5)
+            self.manual_profile_inputs.append(widget)
+        manual_card.columnconfigure(1,weight=1)
+        self.profile_cards=(auto_card,manual_card)
+        for row,key in enumerate(('interval','unit','pressure_multiplier')):
+            ttk.Label(display,text={'interval':'Interval (seconds)','unit':'Unit',
+                                   'pressure_multiplier':'Pressure multiplier (x)'}[key]).grid(
+                                       row=row,column=0,sticky='w',padx=(0,12),pady=5)
+            ttk.Combobox(display,textvariable=self.config_vars[key],values=choices[key],
+                         state='readonly',width=30,style='SettingsWhite.TCombobox').grid(
+                             row=row,column=1,sticky='ew',pady=4)
+        ttk.Label(display,text='Recommended: 0.5 s',foreground='#576677').grid(row=0,column=2,sticky='w',padx=10)
+        ttk.Label(display,text='0.5 s means one reading is requested every half-second. Actual sampling may be slower if communication is delayed.',
+                  foreground='#576677',wraplength=350,justify='left').grid(row=1,column=2,rowspan=2,sticky='nw',padx=10,pady=(4,0))
+        ttk.Label(display,text='x1 = normal; x1000 = corrected PSI after device decimal decoding. Verify against a trusted pressure reference before recording.',
+                  foreground='#a45300',wraplength=350,justify='left').grid(row=3,column=2,sticky='nw',padx=10,pady=(4,0))
+        self.config_vars['mode'].trace_add('write',lambda *_:self.update_device_profile())
+        self.update_device_profile()
+
+        self.sound_enabled=tk.BooleanVar(value=self.settings.get('sound_enabled',True))
+        ttk.Checkbutton(actions,text='Enable operational sounds (mute / unmute)',variable=self.sound_enabled,
+                        command=self.toggle_sounds).pack(anchor='w',pady=(4,12))
+        self.auto=tk.BooleanVar(value=self.settings['auto_connect'])
+        ttk.Checkbutton(actions,text='Auto-connect last configuration at startup',variable=self.auto).pack(anchor='w',pady=(4,16))
+        ttk.Label(actions,text='Hardware profile: PMS-970  |  FC03  |  address 0x0001  |  readout + status',wraplength=360).pack(anchor='w',pady=(0,8))
+        ttk.Label(actions,text='Stored samples are corrected PSI values. Each recording keeps its multiplier in the session settings; old recordings are not rescaled.',wraplength=360).pack(anchor='w',pady=(0,8))
+        ttk.Label(actions,text='Device communication confirmed by user at 9600 baud, November 2026.',wraplength=360).pack(anchor='w',pady=(0,12))
+        ttk.Label(actions,text='Data directory:',font=(UI_FONT,9,'bold')).pack(anchor='w')
+        ttk.Label(actions,text=str(DATA),wraplength=360).pack(anchor='w',pady=(2,18))
+        ttk.Button(actions,text='Save and reconnect',command=self.apply_settings,style='Accent.TButton').pack(anchor='w')
+    def make_about(self):
+        host=self.pages['About']
+        canvas=tk.Canvas(host,bg=BG,highlightthickness=0)
+        scrollbar=ttk.Scrollbar(host,orient='vertical',command=canvas.yview)
+        scrollbar.pack(side='right',fill='y')
+        canvas.pack(side='left',fill='both',expand=True)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        outer=ttk.Frame(canvas,padding=(4,4,18,24))
+        window=canvas.create_window((0,0),window=outer,anchor='nw')
+        outer.bind('<Configure>',lambda event:canvas.configure(scrollregion=canvas.bbox('all')))
+        canvas.bind('<Configure>',lambda event:canvas.itemconfigure(window,width=event.width))
+        self.about_canvas=canvas
+        ttk.Label(outer,text='About Digital Pressure Recorder',style='Title.TLabel').pack(anchor='w',pady=(8,16))
+        content=ttk.Frame(outer)
+        content.pack(anchor='w',fill='x')
+        # Let the canvas control page width. Avoid configuring a packed frame
+        # from its parent's Configure event, which can trigger a layout loop.
+        # Lightweight, offline vector icons drawn directly by Tkinter.
+        # No image files, external packages, or network requests required.
+        def icon(parent,kind,color='#21657b'):
+            c=tk.Canvas(parent,width=30,height=30,bg=BG,highlightthickness=0)
+            kw=dict(fill='',outline=color,width=2)
+            def line(*coords):c.create_line(*coords,fill=color,width=2,capstyle='round',joinstyle='round')
+            if kind=='activity':
+                line(3,16,8,16,11,8,15,23,19,12,22,16,27,16)
+            elif kind=='database':
+                c.create_oval(5,4,25,12,**kw)
+                c.create_arc(5,4,25,23,start=180,extent=180,style='arc',outline=color,width=2)
+                line(5,8,5,23);line(25,8,25,23)
+                c.create_arc(5,18,25,28,start=180,extent=180,style='arc',outline=color,width=2)
+                c.create_arc(5,11,25,19,start=180,extent=180,style='arc',outline=color,width=2)
+            elif kind=='flag':
+                line(7,26,7,4);line(7,5,24,5,20,12,24,19,7,19)
+            elif kind=='chart':
+                line(5,4,5,25,27,25);line(8,20,14,14,19,17,26,7)
+            elif kind=='file':
+                line(7,3,19,3,25,9,25,27,7,27,7,3)
+                line(19,3,19,9,25,9);line(11,15,21,15);line(11,20,21,20)
+            elif kind=='sliders':
+                for y,x in ((7,11),(15,21),(23,14)):
+                    line(4,y,26,y)
+                    c.create_rectangle(x-3,y-4,x+3,y+4,fill=BG,outline=color,width=2)
+            elif kind=='flask':
+                line(11,3,19,3);line(13,3,13,12,5,25,7,27,23,27,25,25,17,12,17,3)
+                line(9,20,21,20)
+            elif kind=='check':
+                c.create_oval(4,4,26,26,**kw);line(9,15,13,19,21,10)
+            elif kind=='plus':
+                c.create_oval(4,4,26,26,**kw);line(15,9,15,21);line(9,15,21,15)
+            elif kind=='mail':
+                c.create_rectangle(4,7,26,23,**kw);line(4,8,15,17,26,8)
+            return c
+        def section_title(text):
+            ttk.Label(content,text=text,font=(UI_FONT,12,'bold')).pack(anchor='w',pady=(14,7))
+        def paragraph(text,space=7):
+            ttk.Label(content,text=text,wraplength=880,justify='left').pack(anchor='w',fill='x',pady=(0,space))
+        ttk.Label(content,text='Digital Pressure Recorder',font=(UI_FONT,18,'bold')).pack(anchor='w',pady=(0,4))
+        ttk.Label(content,text='A software by Eka Yudhi Pratama',font=(UI_FONT,10,'bold')).pack(anchor='w')
+        ttk.Label(content,text='Version 1.0  •  November 2026').pack(anchor='w',pady=(5,12))
+        paragraph('A Windows desktop application for real-time pressure monitoring, recording, and analysis using industrial pressure transmitters via Modbus RTU.')
+        ttk.Separator(content).pack(fill='x',pady=(8,4))
+        section_title('Key features')
+        features=[
+            ('Real-Time Pressure Monitoring','View live pressure readings with a continuously updating graph, connection status, and configurable display units (psi, bar, kPa, MPa).'),
+            ('Pressure Data Recording','Record pressure measurements into organized sessions, with a configurable acquisition interval. Recommended interval: 0.5 seconds.'),
+            ('Event Annotations','Mark important operational events during recording to provide context when reviewing pressure trends.'),
+            ('Recording History & Analysis','Review previously recorded sessions with interactive graphs, zoom and pan controls, pressure statistics, and event markers.'),
+            ('Reporting','Generate reports from recorded pressure data for documentation and operational review.'),
+            ('Device Configuration','Configure serial port, baud rate, Modbus parameters, sampling interval, display units, and computer-local timestamps.'),
+            ('Simulation Mode','Test the monitoring and recording workflow without connecting physical hardware.'),
+        ]
+        feature_icons=['activity','database','flag','chart','file','sliders','flask']
+        for (name,description),kind in zip(features,feature_icons):
+            feature_row=ttk.Frame(content)
+            feature_row.pack(fill='x',pady=(10,3))
+            icon(feature_row,kind).pack(side='left',anchor='n',padx=(0,12))
+            feature_text=ttk.Frame(feature_row)
+            feature_text.pack(side='left',fill='x',expand=True)
+            ttk.Label(feature_text,text=name,font=(UI_FONT,10,'bold')).pack(anchor='w')
+            ttk.Label(feature_text,text=description,wraplength=820,justify='left').pack(anchor='w',pady=(3,0))
+        ttk.Separator(content).pack(fill='x',pady=(14,4))
+        section_title('Supported devices')
+        for kind,description in [
+            ('check','Aplisens PMS-970 — Modbus RTU'),
+            ('plus','More devices coming soon. Contact the developer to request support for additional hardware.'),
+        ]:
+            device_row=ttk.Frame(content);device_row.pack(fill='x',pady=4)
+            icon(device_row,kind,'#137a45' if kind=='check' else '#576677').pack(side='left',padx=(0,12))
+            ttk.Label(device_row,text=description,wraplength=820,justify='left').pack(side='left',anchor='center')
+        ttk.Separator(content).pack(fill='x',pady=(14,4))
+        section_title('Status key')
+        for name,description,color in [
+            ('LIVE','Receiving valid readings','#137a45'),
+            ('DISCONNECTED','No active device connection','#b55c00'),
+            ('RECORDING','Saving pressure data','#c92c38'),
+            ('REC OFF','Recording inactive','#576677'),
+        ]:
+            line=ttk.Frame(content);line.pack(fill='x',pady=4)
+            tk.Label(line,text='●  '+name,bg=BG,fg=color,font=(UI_FONT,10),width=18,anchor='w').pack(side='left')
+            ttk.Label(line,text=description).pack(side='left')
+        ttk.Separator(content).pack(fill='x',pady=(14,4))
+        section_title('Developer & Contact')
+        paragraph('Eka Yudhi Pratama')
+        for address in ('epratama2@slb.com','just_eka@ymail.com'):
+            email_row=ttk.Frame(content);email_row.pack(fill='x',pady=2)
+            icon(email_row,'mail','#576677').pack(side='left',padx=(0,10))
+            ttk.Label(email_row,text=address).pack(side='left')
+        ttk.Label(content,text='Digital Pressure Recorder  •  Version 1.0  •  November 2026').pack(anchor='w',pady=(15,10))
+
     def find_ports(self):
         from serial.tools.list_ports import comports
-        ports=list(comports()); messagebox.showinfo('COM ports','\n'.join(f'{p.device}: {p.description}' for p in ports) or 'No serial devices found')
-        if len(ports)==1:self.config_vars['port'].set(ports[0].device)
+        ports=list(comports()); names=[p.device+' — '+p.description for p in ports]
+        self.port_combo.configure(values=names)
+        previous=self.config_vars['port'].get().split(' — ',1)[0]
+        self.config_vars['port'].set(next((n for n in names if n.split(' — ',1)[0]==previous),names[0] if names else ''))
+        self.port_count.config(text=f'{len(names)} ports detected')
+    def make_help(self):
+        """Always-accessible Modbus RTU connection checklist; no startup popup."""
+        page=self.pages['Help']
+        ttk.Label(page,text='Help — Modbus RTU Connection Guide',style='Title.TLabel').pack(anchor='w',pady=(0,10))
+        ttk.Label(page,text='Verify your pressure transmitter and USB-RS485 connection before recording.',
+                  foreground='#576677').pack(anchor='w',pady=(0,16))
+        checklist=(
+            ('1. Check hardware','Connect the USB-RS485 adapter, confirm transmitter power, and verify RS485 A/B wiring against the device documentation.'),
+            ('2. Select COM port','In Settings, select the COM port assigned to your USB-RS485 adapter.'),
+            ('3. Verify communication','Use 9600 baud for the configured setup. Confirm slave address, parity and stop bits match the transmitter.'),
+            ('4. Connect and verify','Apply Settings to reconnect. Confirm valid live pressure readings before recording.'),
+        )
+        for heading,description in checklist:
+            ttk.Label(page,text=heading,font=(UI_FONT,11,'bold')).pack(anchor='w',pady=(8,3))
+            ttk.Label(page,text=description,wraplength=700,justify='left').pack(anchor='w',pady=(0,8))
+        ttk.Button(page,text='Open Settings',style='Accent.TButton',
+                   command=lambda:self.show('Settings')).pack(anchor='w',pady=(16,0))
+
+    def update_simulate_disconnect_visibility(self):
+        if self.settings.get('mode')=='Simulation':
+            self.simulate_disconnect_button.pack(side='right')
+        else:
+            self.simulate_disconnect_button.pack_forget()
+            self.drop.set(False)
+
+    def toggle_sounds(self):
+        enabled=self.sound_enabled.get()
+        self.sounds.set_enabled(enabled)
+        self.settings['sound_enabled']=enabled
+        try:
+            tmp=DATA/'settings.tmp'
+            tmp.write_text(json.dumps(self.settings,indent=2))
+            tmp.replace(DATA/'settings.json')
+        except OSError as exc:
+            self.footer.config(text='Unable to persist sound preference: '+str(exc))
+
+    def update_device_profile(self):
+        """Enable custom serial controls only for Modbus manual mode."""
+        modbus=self.config_vars['mode'].get()=='Modbus RTU'
+        manual=self.device_profile.get()=='manual' and modbus
+        for widget in self.manual_profile_inputs:
+            widget.configure(state=('readonly' if isinstance(widget,ttk.Combobox) else 'normal') if manual else 'disabled')
+        self.port_combo.configure(state='readonly' if modbus else 'disabled')
+        for card in self.profile_cards:
+            for child in card.winfo_children():
+                if isinstance(child,ttk.Radiobutton):child.configure(state='normal' if modbus else 'disabled')
+
     def apply_settings(self):
         if self.sid or self.pending:messagebox.showinfo('Recording','Stop recording before changing settings.');return
         try:
             s={k:v.get() for k,v in self.config_vars.items()}
-            for k in ['baud','stopbits','address']:s[k]=int(s[k])
-            for k in ['interval','utc_offset']:s[k]=float(s[k])
+            s['port']=s['port'].split(' — ',1)[0]
+            s['device_profile']=self.device_profile.get()
+            if s['device_profile']=='auto_pms970' and s['mode']=='Modbus RTU':
+                s.update(baud=9600,parity='E',stopbits=2,address=1)
+            else:
+                for k in ['baud','stopbits','address']:s[k]=int(s[k])
+            s['interval']=float(s['interval'])
+            s['pressure_multiplier']=validated_pressure_multiplier(s)
             if not 1<=s['address']<=247:raise ValueError('Slave address must be 1-247')
             if s['mode']=='Modbus RTU' and not s['port']:raise ValueError('Specify a COM port')
-            s['auto_connect']=self.auto.get(); tmp=DATA/'settings.tmp'; tmp.write_text(json.dumps(s,indent=2)); tmp.replace(DATA/'settings.json')
-            self.settings=s; self.buffer.clear(); self.latest=None; self.connect(); self.show('Live Monitor')
+            s['auto_connect']=self.auto.get()
+            s['sound_enabled']=self.sound_enabled.get()
+            self.sounds.set_enabled(s['sound_enabled'])
+            tmp=DATA/'settings.tmp'; tmp.write_text(json.dumps(s,indent=2)); tmp.replace(DATA/'settings.json')
+            old_unit=self.settings['unit']
+            self.settings=s
+            for key in ('baud','parity','stopbits','address'):
+                self.config_vars[key].set(str(s[key]))
+            self.scaling_indicator.config(text='Pressure correction: x'+str(s['pressure_multiplier']))
+            self.update_simulate_disconnect_visibility()
+            if old_unit!=s['unit']:
+                # Manual scale inputs reflect the selected display unit.
+                self.live_min.set(f'{from_psi(to_psi(float(self.live_min.get()),old_unit),s["unit"]):.5f}')
+                self.live_max.set(f'{from_psi(to_psi(float(self.live_max.get()),old_unit),s["unit"]):.5f}')
+            self.connect(); self.show('Live Monitor')
         except Exception as e:messagebox.showerror('Settings',str(e))
     def make_viewer(self):
-        p=self.pages['Viewer']; top=ttk.Frame(p); top.pack(fill='x'); ttk.Button(top,text='< History',command=lambda:self.show('History')).pack(side='left')
-        self.viewer_title=ttk.Label(top,text='Recording Viewer',style='Title.TLabel'); self.viewer_title.pack(side='left',padx=12)
-        ttk.Button(top,text='Refresh',command=lambda:self.load_viewer(self.viewer_sid)).pack(side='right')
-        body=ttk.Panedwindow(p,orient='horizontal'); body.pack(fill='both',expand=True,pady=8); left=ttk.Frame(body); side=ttk.Frame(body); body.add(left,weight=4); body.add(side,weight=1)
-        scroll=tk.Canvas(side,width=285,bg='#f3f6f8',highlightthickness=0); sb=ttk.Scrollbar(side,orient='vertical',command=scroll.yview)
-        sb.pack(side='right',fill='y');scroll.pack(side='left',fill='both',expand=True);scroll.configure(yscrollcommand=sb.set)
-        right=ttk.Frame(scroll,padding=10); item=scroll.create_window((0,0),window=right,anchor='nw')
-        right.bind('<Configure>',lambda e:scroll.configure(scrollregion=scroll.bbox('all')))
-        scroll.bind('<Configure>',lambda e:scroll.itemconfigure(item,width=e.width))
-        self.vfig,self.vax,self.vcanvas=self.plot(left); NavigationToolbar2Tk(self.vcanvas,left).update()
+        p=self.pages['Viewer']
+        top=ttk.Frame(p);top.pack(fill='x',pady=(0,7))
+        ttk.Button(top,text='‹ History',style='Compact.TButton',
+                   command=lambda:self.show('History')).pack(side='left')
+        self.viewer_title=ttk.Label(top,text='Recording Viewer',style='Title.TLabel')
+        self.viewer_title.pack(side='left',padx=12)
+        ttk.Button(top,text='Create Report',style='Report.TButton',
+                   command=lambda:self.open_reporting(self.viewer_sid)).pack(side='right',padx=(0,10))
+        ttk.Button(top,text='Refresh',style='Compact.TButton',
+                   command=lambda:self.load_viewer(self.viewer_sid)).pack(side='right')
+
+        strip=ttk.Frame(p,padding=(10,7),relief='solid',borderwidth=1)
+        strip.pack(fill='x',pady=(0,8))
+        self.viewer_summary_vars={}
+        summary_fields=(('min','Min pressure'),('max','Max pressure'),
+                        ('first_pressure','Start pressure'),('last_pressure','Last pressure'),
+                        ('start','Start time'),('stop','Stop time'),('duration','Duration'))
+        for index,(key,label) in enumerate(summary_fields):
+            strip.columnconfigure(index,weight=1,uniform='summary')
+            cell=ttk.Frame(strip)
+            cell.grid(row=0,column=index,sticky='ew',padx=3)
+            ttk.Label(cell,text=label,font=(UI_FONT,8),foreground='#576677').pack(anchor='w')
+            var=tk.StringVar(value='—')
+            self.viewer_summary_vars[key]=var
+            ttk.Label(cell,textvariable=var,font=(UI_FONT,10,'bold')).pack(anchor='w')
+
+        self.viewer_toolbar=ttk.Frame(p);toolbar=self.viewer_toolbar
+        toolbar.pack(fill='x',pady=(0,7))
+        self.history_window=tk.StringVar(value='All data')
+        ttk.Label(toolbar,text='Window').pack(side='left')
+        time_box=ttk.Combobox(toolbar,textvariable=self.history_window,
+                             values=['1 min','5 min','10 min','15 min','30 min','1 hour','All data'],
+                             state='readonly',width=10)
+        time_box.pack(side='left',padx=(5,12))
+        time_box.bind('<<ComboboxSelected>>',lambda e:self.slide_history(0))
+        ttk.Label(toolbar,text='Time display').pack(side='left')
+        self.viewer_time_display=tk.StringVar(value='Date & time')
+        time_display=ttk.Combobox(toolbar,textvariable=self.viewer_time_display,
+                                  values=['Elapsed time','Date & time'],state='readonly',width=14)
+        time_display.pack(side='left',padx=(5,10))
+        time_display.bind('<<ComboboxSelected>>',lambda e:self.paint_viewer())
+        self.viewer_scale_mode=tk.StringVar(value='Auto')
+        ttk.Radiobutton(toolbar,text='Auto scale',value='Auto',variable=self.viewer_scale_mode,
+                        command=self.select_viewer_scale).pack(side='left',padx=(0,5))
+        ttk.Radiobutton(toolbar,text='Manual scale',value='Manual',variable=self.viewer_scale_mode,
+                        command=self.select_viewer_scale).pack(side='left')
+        ttk.Button(toolbar,text='Manual scale options',style='Compact.TButton',
+                   command=self.show_viewer_scale_options).pack(side='left',padx=(8,0))
+
+        self.viewer_bottom=ttk.Frame(p)
+        self.viewer_bottom.pack(side='bottom',fill='x',pady=(4,0))
+        self.viewer_bottom_toggle=ttk.Button(self.viewer_bottom,text='Hide detail and annotation',
+                                             style='Compact.TButton',command=self.toggle_viewer_panel)
+        self.viewer_bottom_toggle.pack(anchor='w')
+        self.viewer_bottom_content=ttk.Frame(self.viewer_bottom)
+        self.viewer_bottom_content.pack(fill='x',pady=(4,0))
+        self.viewer_bottom_content.columnconfigure(0,weight=1,uniform='bottom')
+        self.viewer_bottom_content.columnconfigure(1,weight=1,uniform='bottom')
+        details=ttk.LabelFrame(self.viewer_bottom_content,text='Job details',padding=8)
+        details.grid(row=0,column=0,sticky='nsew',padx=(0,7))
+        annotations=ttk.LabelFrame(self.viewer_bottom_content,text='Annotations',padding=8)
+        annotations.grid(row=0,column=1,sticky='nsew',padx=(7,0))
+        details.columnconfigure(0,weight=1);details.columnconfigure(1,weight=1)
+        self.viewer_details=ttk.Label(details,text='—',justify='left',anchor='nw')
+        self.viewer_details.grid(row=0,column=0,sticky='nw',padx=(4,12),pady=(2,6))
+        self.viewer_details_right=ttk.Label(details,text='—',justify='left',anchor='nw')
+        self.viewer_details_right.grid(row=0,column=1,sticky='nw',padx=(4,0),pady=(2,6))
+        ttk.Button(details,text='Edit job details',style='Compact.TButton',
+                   command=self.edit_viewer_details).grid(row=1,column=0,columnspan=2,sticky='w')
+        actions=ttk.Frame(annotations);actions.pack(fill='x',pady=(0,5))
+        ttk.Label(actions,text='Right-click chart to annotate; left-click to select time',
+                  foreground='#576677').pack(side='left')
+        ttk.Button(actions,text='Delete selected',style='Compact.TButton',
+                   command=self.delete_annotation).pack(side='right',padx=(5,0))
+        ttk.Button(actions,text='Edit selected',style='Compact.TButton',
+                   command=self.edit_annotation).pack(side='right',padx=(5,0))
+        ttk.Button(actions,text='+ Add annotation',style='Compact.TButton',
+                   command=self.add_annotation).pack(side='right')
+        self.events_tree=ttk.Treeview(annotations,columns=('minute','label','kind','pressure'),
+                                      show='headings',height=3,selectmode='browse')
+        for col,width in [('minute',130),('label',220),('kind',110),('pressure',125)]:
+            self.events_tree.heading(col,text='Time' if col=='minute' else col.title())
+            self.events_tree.column(col,width=width,minwidth=70,stretch=True)
+        self.events_tree.pack(fill='x')
+        self.events_tree.bind('<Double-1>',lambda e:self.edit_annotation())
+        self.events_tree.bind('<<TreeviewSelect>>',self.select_history_event)
+        self.annotation_time=tk.StringVar(value='')
+
+        chart=ttk.Frame(p);chart.pack(fill='both',expand=True)
+        self.vfig,self.vax,self.vcanvas=self.plot(chart)
         self.vcanvas.mpl_connect('button_press_event',self.chart_click)
-        ttk.Label(left,text='Click chart to capture annotation time. Toolbar: pan / zoom / reset.').pack(anchor='w')
-        self.events_tree=ttk.Treeview(left,columns=('minute','label','kind'),show='headings',height=4)
-        for col in ('minute','label','kind'):self.events_tree.heading(col,text=col.title())
-        self.events_tree.pack(fill='x'); self.events_tree.bind('<Double-1>',lambda e:self.edit_annotation())
-        self.view_vars={}
-        for k,label,default in [('title','Report title',''),('xmin','From (elapsed minutes)','0'),('xmax','To (elapsed minutes)','1'),('ymin','Pressure minimum','0'),('ymax','Pressure maximum','3000')]:
-            ttk.Label(right,text=label).pack(anchor='w'); v=tk.StringVar(value=default); self.view_vars[k]=v; ttk.Entry(right,textvariable=v,width=26).pack(fill='x',pady=(2,8))
-        ttk.Button(right,text='Apply scale / Save view',command=self.apply_view).pack(fill='x',pady=4)
-        ttk.Button(right,text='Use current view',command=self.capture_view).pack(fill='x',pady=4)
-        ttk.Button(right,text='Edit job details',command=self.edit_viewer_details).pack(fill='x',pady=4)
-        ttk.Separator(right).pack(fill='x',pady=12)
-        self.annotation_time=tk.StringVar(value='0'); ttk.Label(right,text='Annotation time (elapsed minutes)').pack(anchor='w'); ttk.Entry(right,textvariable=self.annotation_time).pack(fill='x')
-        ttk.Button(right,text='+ Add review annotation',command=self.add_annotation).pack(fill='x',pady=6)
-        self.selected_export=tk.BooleanVar(); ttk.Checkbutton(right,text='Export selected time range',variable=self.selected_export).pack(anchor='w',pady=8)
-        exports=ttk.Frame(right);exports.pack(fill='x');exports.columnconfigure((0,1),weight=1)
-        for n,fmt in enumerate(['xlsx','csv','pdf','png']):ttk.Button(exports,text='Export '+fmt.upper(),command=lambda f=fmt:self.do_export(f)).grid(row=n//2,column=n%2,sticky='ew',padx=2,pady=3)
+        self.viewer_annotation_menu=tk.Menu(self,tearoff=0)
+        self.viewer_annotation_menu.add_command(label='Add annotation here',
+                                                 command=self.add_annotation)
+        self.history_slider=TimeScrollbar(chart,self.slide_history)
+        self.history_slider.pack(side='bottom',before=self.vcanvas.get_tk_widget(),fill='x')
+        self.history_labels=tk.BooleanVar(value=True)
+        # Retain export configuration for the future Reporting workspace.
+        self.selected_export=tk.BooleanVar(value=False)
+        self.view_vars={key:tk.StringVar(value=default)
+                        for key,default in [('title',''),('xmin','0'),('xmax','1'),
+                                            ('ymin','0'),('ymax','3000')]}
+        self.chart_tools(self.vcanvas,chart,False)
+
+    def toggle_viewer_panel(self):
+        content=self.viewer_bottom_content
+        if content.winfo_manager():
+            content.pack_forget()
+            self.viewer_bottom_toggle.configure(text='Show detail and annotation')
+        else:
+            content.pack(fill='x',pady=(4,0))
+            self.viewer_bottom_toggle.configure(text='Hide detail and annotation')
+
     def load_viewer(self,sid):
         if not sid:return
         self.viewer_sid=sid; self.vsession=self.store.get(sid); self.vrows=self.store.plot_rows(sid); self.vevents=self.store.events(sid)
         d=json.loads(self.vsession['details']); self.viewer_title.config(text=(d.get('well') or 'Unnamed well')+'  |  '+(d.get('job') or 'Recording'))
+        self.viewer_details.config(text='\n'.join(f'{label}: {d.get(key) or "—"}' for key,label in
+                                                (('well','Well'),('job','Job'),('job_id','Job ID'),('engineer','Engineer'))))
+        self.viewer_details_right.config(text='\n'.join((
+            f'Client: {d.get("client") or "—"}',
+            f'Job date: {d.get("job_date") or "—"}',
+            f'Mode: {self.vsession["mode"]}',
+            f'Notes: {d.get("notes") or "—"}'
+        )))
+        self.update_viewer_summary()
+        self.annotation_time.set('')
         end=max(.01,((self.vrows[-1]['ts'] if self.vrows else self.vsession['started']+60)-self.vsession['started'])/60)
         vals=[r['value'] for r in self.vrows if r['value'] is not None]; maximum=max(vals) if vals else 3000
         v={'title':d.get('well') or self.vsession['name'],'xmin':0,'xmax':end,'ymin':min(0,min(vals)) if vals else 0,'ymax':max(1,maximum*1.1),**json.loads(self.vsession['view'])}
+        # Saved chart limits may represent a tiny zoomed segment from an earlier
+        # review. Opening or refreshing a recording must always fit its full span.
+        v['xmin']=0
+        v['xmax']=end
+        self.history_window.set('All data')
         for k,var in self.view_vars.items():var.set(str(v[k]))
         self.paint_viewer(); self.show('Viewer')
     def view_values(self):
         v={k:var.get() if k=='title' else float(var.get()) for k,var in self.view_vars.items()}
         if any(not math.isfinite(v[k]) for k in ['xmin','xmax','ymin','ymax']):raise ValueError('Scale must be finite')
-        if v['xmax']<=v['xmin'] or v['ymax']<=v['ymin']:raise ValueError('Maximum must exceed minimum')
+        if v['xmax']<=v['xmin']:raise ValueError('Maximum time must exceed minimum time')
+        validated_pressure_limits(v['ymin'],v['ymax'])
         return v
     def paint_viewer(self):
         v=self.view_values(); ax=self.vax; ax.clear(); start=self.vsession['started']
         ax.plot([(r['ts']-start)/60 for r in self.vrows],[r['value'] if r['quality']=='OK' and r['value'] is not None else math.nan for r in self.vrows],color='#008b92',lw=1.1)
-        ax.set(xlabel='Elapsed minutes',ylabel='Pressure ('+self.vsession['unit']+')',title=v['title'],xlim=(v['xmin'],v['xmax']),ylim=(v['ymin'],v['ymax'])); ax.grid(alpha=.2)
+        from matplotlib.ticker import FuncFormatter
+        apply_window_time_grid(ax,self.history_window.get(),units='minutes')
+        def time_label(x,pos):
+            if self.viewer_time_display.get()=='Elapsed time':
+                seconds=int(round(x*60))
+                return f'{seconds//60:02}:{seconds%60:02}'
+            return stamp(start+x*60,None)[11:19]
+        ax.xaxis.set_major_formatter(FuncFormatter(time_label))
+        ax.tick_params(axis='x',labelrotation=0)
+        ax.set(xlabel='Elapsed time (mm:ss)' if self.viewer_time_display.get()=='Elapsed time' else 'Date & time',
+               ylabel='Pressure ('+self.settings['unit']+')',
+               xlim=(v['xmin'],v['xmax']),ylim=(v['ymin'],v['ymax']))
+        # Axis formatter is chosen by apply_pressure_grid based on tick spacing.
+        apply_pressure_grid(ax,v['ymin'],v['ymax'],unit=self.settings['unit'],raw_psi=True)
+        apply_engineering_grid(ax)
+        if self.viewer_time_display.get()=='Date & time':
+            from datetime import datetime
+            date=datetime.fromtimestamp(start+v['xmin']*60).strftime('%d %b %Y')
+            ax.set_xlabel(date+'  |  Computer local time')
         for i in self.events_tree.get_children():self.events_tree.delete(i)
         for e in self.vevents:
             x=(e['ts']-start)/60; ax.axvline(x,ls='--',lw=.7,color='#bd7b1c')
-            annotation=ax.annotate(e['label'],(x,.95),xycoords=('data','axes fraction'),rotation=90,va='top',fontsize=8); annotation.draggable()
-            self.events_tree.insert('','end',iid=str(e['id']),values=(f'{x:.3f}',e['label'],e['kind']))
+            annotation=ax.annotate(e['label'] if self.history_labels.get() else '',(x,.95),xycoords=('data','axes fraction'),rotation=0,va='top',fontsize=8,bbox=dict(facecolor='#fff0b6',edgecolor='#d6ad45',pad=2),clip_on=True); annotation.draggable()
+            pressure=self.annotation_pressure(self.viewer_sid,e['ts'])
+            self.events_tree.insert('','end',iid=str(e['id']),values=(stamp(e['ts'],None)[11:19],e['label'],e['kind'],pressure))
         self.vcanvas.draw_idle()
     def apply_view(self):
-        try:v=self.view_values();self.store.update(self.viewer_sid,'view',v);self.paint_viewer();self.footer.config(text='Viewer configuration saved')
+        try:v=self.view_values();self.store.update(self.viewer_sid,'view',v);self.viewer_scale_mode.set('Manual');self.paint_viewer();self.footer.config(text='Viewer configuration saved')
         except Exception as e:messagebox.showerror('Chart settings',str(e))
     def capture_view(self):
         for k,n in zip(['xmin','xmax','ymin','ymax'],[*self.vax.get_xlim(),*self.vax.get_ylim()]):self.view_vars[k].set(f'{n:.5f}')
         self.apply_view()
+    def update_viewer_summary(self):
+        if not self.viewer_sid:return
+        lo,hi=self.recording_extrema(self.viewer_sid)
+        with self.store.connect() as c:
+            first=c.execute("SELECT value FROM samples WHERE session=? AND quality='OK' AND value IS NOT NULL ORDER BY ts ASC,id ASC LIMIT 1",(self.viewer_sid,)).fetchone()
+            last=c.execute("SELECT value FROM samples WHERE session=? AND quality='OK' AND value IS NOT NULL ORDER BY ts DESC,id DESC LIMIT 1",(self.viewer_sid,)).fetchone()
+        session=self.vsession
+        begin=session['started']
+        stop=session['ended'] or self.store.stats(self.viewer_sid)['last']
+        elapsed=max(0,int((stop or begin)-begin))
+        values={'min':'—' if lo is None else f'{from_psi(lo,self.settings["unit"]):,.2f} {self.settings["unit"]}',
+                'max':'—' if hi is None else f'{from_psi(hi,self.settings["unit"]):,.2f} {self.settings["unit"]}',
+                'first_pressure':'—' if first is None else f'{from_psi(first["value"],self.settings["unit"]):,.2f} {self.settings["unit"]}',
+                'last_pressure':'—' if last is None else f'{from_psi(last["value"],self.settings["unit"]):,.2f} {self.settings["unit"]}',
+                'start':stamp(begin,None)[11:19],
+                'stop':stamp(stop,None)[11:19] if stop else '—',
+                'duration':f'{elapsed//60}m {elapsed%60:02}s'}
+        for name,value in values.items():self.viewer_summary_vars[name].set(value)
+
+    def select_viewer_scale(self):
+        if self.viewer_scale_mode.get()=='Auto':
+            self.auto_history_scale()
+        else:
+            self.apply_view()
+
+    def show_viewer_scale_options(self):
+        if getattr(self,'viewer_scale_dialog',None) and self.viewer_scale_dialog.winfo_exists():
+            self.viewer_scale_dialog.lift();return
+        win=tk.Toplevel(self);win.title('Manual scale options');win.transient(self)
+        win.resizable(False,False);self.viewer_scale_dialog=win
+        content=ttk.Frame(win,padding=14);content.pack(fill='both',expand=True)
+        display_limits={}
+        for i,(label,key) in enumerate((('Pressure min','ymin'),('Pressure max','ymax'))):
+            ttk.Label(content,text=label+' ('+self.settings['unit']+')').grid(row=i,column=0,sticky='w',pady=5,padx=(0,12))
+            display_limits[key]=tk.StringVar(value=f'{from_psi(float(self.view_vars[key].get()),self.settings["unit"]):.5f}')
+            ttk.Entry(content,textvariable=display_limits[key],width=14).grid(row=i,column=1,pady=5)
+        def apply_display_limits():
+            try:
+                lo=to_psi(float(display_limits['ymin'].get()),self.settings['unit'])
+                hi=to_psi(float(display_limits['ymax'].get()),self.settings['unit'])
+                validated_pressure_limits(lo,hi)
+                self.view_vars['ymin'].set(str(lo))
+                self.view_vars['ymax'].set(str(hi))
+                self.apply_view()
+            except ValueError as exc:messagebox.showerror('Pressure scale',str(exc),parent=win)
+        ttk.Checkbutton(content,text='Show event labels',variable=self.history_labels,
+                        command=self.paint_viewer).grid(row=2,column=0,columnspan=2,sticky='w',pady=8)
+        ttk.Button(content,text='Apply manual scale',style='Compact.TButton',
+                   command=apply_display_limits).grid(row=3,column=0,columnspan=2,sticky='ew',pady=(6,3))
+        ttk.Button(content,text='Close',style='Compact.TButton',
+                   command=win.destroy).grid(row=4,column=0,columnspan=2,sticky='ew')
+
     def chart_click(self,event):
-        if event.inaxes==self.vax and event.xdata is not None:self.annotation_time.set(f'{event.xdata:.5f}')
+        if event.inaxes!=self.vax or event.xdata is None or not self.viewer_sid:
+            return
+        # Ignore middle-button pan and other navigation modes.
+        if event.button not in (1,3):return
+        if getattr(self.vcanvas.toolbar,'mode',''):return
+        self.annotation_time.set(f'{event.xdata:.8f}')
+        if event.button==3:
+            # Matplotlib button_press_event exposes GUI pixel coordinates.
+            widget=self.vcanvas.get_tk_widget()
+            self.viewer_annotation_menu.tk_popup(widget.winfo_rootx()+int(event.x),
+                                                 widget.winfo_rooty()+widget.winfo_height()-int(event.y))
+            self.viewer_annotation_menu.grab_release()
+        else:
+            self.footer.config(text='Annotation position selected — right-click to add annotation')
     def add_annotation(self):
+        if not self.viewer_sid:return
         try:
-            ts=self.vsession['started']+float(self.annotation_time.get())*60
-            last=self.store.stats(self.viewer_sid)['last'] or self.vsession['started']
-            if not self.vsession['started']<=ts<=last:raise ValueError('Choose a time within the recording')
-            label=simpledialog.askstring('Review annotation','Label:',parent=self)
-            if label:self.store.event(self.viewer_sid,ts,label,'Review');self.vevents=self.store.events(self.viewer_sid);self.paint_viewer()
-        except Exception as e:messagebox.showerror('Annotation',str(e))
+            selected=self.annotation_time.get().strip()
+            if not selected:
+                messagebox.showinfo('Add annotation','Left-click a time on the chart, or right-click the chart and select Add annotation here.')
+                return
+            ts=self.vsession['started']+float(selected)*60
+            last=self.vsession['ended'] or self.store.stats(self.viewer_sid)['last'] or self.vsession['started']
+            if not self.vsession['started']<=ts<=last:
+                raise ValueError('Choose a time within the recording.')
+            label=simpledialog.askstring('Review annotation',
+                                         'Label for '+stamp(ts,None)[11:19]+':',
+                                         parent=self)
+            if label and label.strip():
+                self.store.event(self.viewer_sid,ts,label.strip(),'Review')
+                self.vevents=self.store.events(self.viewer_sid)
+                self.paint_viewer()
+        except ValueError as e:messagebox.showerror('Annotation',str(e))
+    def delete_annotation(self):
+        selected=self.events_tree.selection()
+        if not selected or not self.viewer_sid:return
+        event=next((e for e in self.vevents if str(e['id'])==selected[0]),None)
+        if event is None:return
+        when=stamp(event['ts'],None)[11:19]
+        if not messagebox.askyesno('Delete annotation',
+                f'Delete annotation "{event["label"]}" at {when}?\n\n'
+                'This cannot be undone.',icon='warning',parent=self):
+            return
+        try:
+            if self.store.delete_event(event['id'],self.viewer_sid):
+                self.vevents=self.store.events(self.viewer_sid)
+                self.paint_viewer()
+                self.footer.configure(text='Annotation deleted')
+        except Exception as exc:
+            messagebox.showerror('Delete annotation',str(exc),parent=self)
+
     def edit_annotation(self):
-        sel=self.events_tree.selection()
-        if not sel:return
-        event=next(e for e in self.vevents if e['id']==int(sel[0])); label=simpledialog.askstring('Edit annotation','Label:',initialvalue=event['label'],parent=self)
-        if label:self.store.edit_event(event['id'],event['ts'],label);self.vevents=self.store.events(self.viewer_sid);self.paint_viewer()
+        selected=self.events_tree.selection()
+        if not selected:return
+        event=next((e for e in self.vevents if str(e['id'])==selected[0]),None)
+        if not event:return
+        start=self.vsession['started']
+        elapsed=max(0,int(round(event['ts']-start)))
+        win=tk.Toplevel(self);win.title('Edit annotation');win.transient(self)
+        win.resizable(False,False)
+        body=ttk.Frame(win,padding=14);body.pack(fill='both',expand=True)
+        ttk.Label(body,text='Elapsed time (mm:ss)').grid(row=0,column=0,sticky='w',padx=(0,12),pady=6)
+        time_var=tk.StringVar(value=f'{elapsed//60:02}:{elapsed%60:02}')
+        ttk.Entry(body,textvariable=time_var,width=20).grid(row=0,column=1,sticky='ew',pady=6)
+        ttk.Label(body,text='Label').grid(row=1,column=0,sticky='w',padx=(0,12),pady=6)
+        label_var=tk.StringVar(value=event['label'])
+        ttk.Entry(body,textvariable=label_var,width=30).grid(row=1,column=1,sticky='ew',pady=6)
+        def save():
+            try:
+                raw=time_var.get().strip()
+                parts=raw.split(':')
+                if len(parts)!=2 or not all(part.isdigit() for part in parts):
+                    raise ValueError('Enter elapsed time as mm:ss, for example 01:30.')
+                minutes,seconds=map(int,parts)
+                if seconds>=60:raise ValueError('Seconds must be between 00 and 59.')
+                ts=start+minutes*60+seconds
+                last=self.vsession['ended'] or self.store.stats(self.viewer_sid)['last'] or start
+                if not start<=ts<=last:raise ValueError('Annotation time must be within the recording.')
+                label=label_var.get().strip()
+                if not label:raise ValueError('Annotation label cannot be empty.')
+                self.store.edit_event(event['id'],ts,label)
+                self.vevents=self.store.events(self.viewer_sid)
+                self.paint_viewer()
+                self.events_tree.selection_set(str(event['id']))
+                self.events_tree.see(str(event['id']))
+                win.destroy()
+            except ValueError as exc:messagebox.showerror('Edit annotation',str(exc),parent=win)
+        buttons=ttk.Frame(body);buttons.grid(row=2,column=0,columnspan=2,sticky='e',pady=(12,0))
+        ttk.Button(buttons,text='Cancel',style='Compact.TButton',command=win.destroy).pack(side='right',padx=(6,0))
+        ttk.Button(buttons,text='Save changes',style='Compact.TButton',command=save).pack(side='right')
+        win.bind('<Return>',lambda e:save())
+        win.grab_set()
+
     def edit_viewer_details(self):
         if self.save_job:self.after_cancel(self.save_job);self.save_details()
         sid=self.viewer_sid; d=json.loads(self.store.get(sid)['details']); win=tk.Toplevel(self);win.title('Job details'); vars={}
@@ -254,48 +2123,536 @@ class App(tk.Tk):
             try:export(self.store,sid,path,v,selected);self.engine.emit('exported',path=path)
             except Exception as e:self.engine.emit('export_error',text='Export failed: '+str(e))
         threading.Thread(target=work,daemon=True).start()
+    def show_export_success(self,path):
+        """Notify on the Tk main thread after the export has completed."""
+        dialog=tk.Toplevel(self)
+        dialog.title('Export successful')
+        dialog.transient(self)
+        dialog.resizable(False,False)
+        dialog.protocol('WM_DELETE_WINDOW',dialog.destroy)
+        set_window_icon(dialog)
+        body=ttk.Frame(dialog,padding=24)
+        body.pack(fill='both',expand=True)
+        ttk.Label(body,text='Export completed successfully',font=(UI_FONT,13,'bold')).pack(anchor='w',pady=(0,12))
+        ttk.Label(body,text='Saved file:',foreground='#576677').pack(anchor='w')
+        ttk.Label(body,text=Path(path).name,wraplength=460).pack(anchor='w',pady=(3,16))
+        actions=ttk.Frame(body)
+        actions.pack(fill='x')
+        def open_folder():
+            folder=Path(path).resolve().parent
+            try:
+                if os.name=='nt':os.startfile(str(folder))
+                else:
+                    import subprocess
+                    subprocess.Popen(['open' if sys.platform=='darwin' else 'xdg-open',str(folder)])
+                dialog.destroy()
+            except Exception as exc:
+                messagebox.showerror('Cannot open folder',str(exc),parent=dialog)
+        ttk.Button(actions,text='Go to Export Folder',command=open_folder).pack(side='left')
+        ok=ttk.Button(actions,text='OK',command=dialog.destroy)
+        ok.pack(side='right',padx=(16,0))
+        dialog.update_idletasks()
+        dialog.geometry(f'+{self.winfo_rootx()+max(0,(self.winfo_width()-dialog.winfo_reqwidth())//2)}+{self.winfo_rooty()+max(0,(self.winfo_height()-dialog.winfo_reqheight())//2)}')
+        dialog.grab_set()
+        ok.focus_set()
+        try:
+            if os.name=='nt':ctypes.windll.user32.MessageBeep(0x40)
+            else:dialog.bell()
+        except Exception:pass
+
     def tick(self):
+        # Give shutdown priority over drawing charts or processing queued samples.
+        # Otherwise the UI can look frozen even after the window's X is clicked.
+        if self.closing:
+            # Shutdown completion is handled by _finish_close, independent from the
+            # acquisition/chart refresh timer.
+            return
         try:
             while True:
                 kind,d=self.engine.messages.get_nowait()
+                if kind in ('sample','connected','communication_error') and d.get('generation')!=self.connection_generation:
+                    continue
                 if kind=='sample':
                     s=d['sample'];self.latest=s;self.buffer.append(s)
-                    if s['quality']=='OK':self.value.config(text=f"{s['value']:,.2f} {self.settings['unit']}")
-                    self.reading_status.config(text=f"{self.settings['mode'].upper()}  |  {s['quality']}  |  {stamp(s['ts'],self.settings['utc_offset'])[11:23]}",foreground='#008b92' if s['quality']=='OK' else '#b45309')
+                    healthy=s['quality']=='OK'
+                    if healthy:
+                        if not self.audio_connected_announced:
+                            self.sounds.play('connected')
+                            self.audio_connected_announced=True
+                        self.audio_link_healthy=True
+                    elif self.audio_link_healthy:
+                        self.audio_link_healthy=False
+                        self.sounds.play('connection_lost')
+                        if self.sid:self.sounds.play('recording_interrupted')
+                    if self.live_window_origin is None:self.live_window_origin=s['ts']
+                    self.connection_pending=False
+                    self.connection_timed_out=False
+                    self.connect_btn.config(state='normal')
+                    if s['quality']=='OK':self.value.config(text=f"{from_psi(s['value'],self.settings['unit']):,.3f}".rstrip('0').rstrip('.')+f" {self.settings['unit']}")
+                    self.reading_status.config(text=f"{self.settings['mode'].upper()}  |  {s['quality']}  |  {stamp(s['ts'],None)[11:23]}",fg='#008b92' if s['quality']=='OK' else '#b45309')
                     if d['sid']:self.rec_count+=1;self.rec_errors+=s['quality']!='OK'
-                elif kind=='connected':self.connected=True;self.connection.config(text=d['settings']['mode']+'  |  '+(d['settings']['port'] or 'virtual sensor'));self.connect_btn.config(text='Disconnect')
-                elif kind=='disconnected':self.connected=False;self.connection.config(text='Disconnected');self.connect_btn.config(text='Connect');self.reading_status.config(text='STALE  |  disconnected');self.latest=None
+                elif kind=='connected':
+                    self.live_window_origin=None
+                    self.connected=True
+                    self.connection.config(text=d['settings']['mode']+'  |  '+(d['settings']['port'] or 'virtual sensor'))
+                    self.connect_btn.config(text='Disconnect',state='normal')
+                    self.reading_status.config(text='WAITING FOR FIRST READING',fg=INK)
+                elif kind=='disconnected':
+                    if self.connection_pending:continue
+                    if self.audio_manual_disconnect:self.sounds.play('manual_disconnect')
+                    self.audio_manual_disconnect=False
+                    self.audio_link_healthy=False
+                    self.audio_connected_announced=False
+                    self.connected=False;self.connection.config(text='Disconnected');self.connect_btn.config(text='Connect',state='normal');self.reading_status.config(text='STALE  |  disconnected',fg='#b45309');self.latest=None
                 elif kind=='started':
-                    self.sid=d['sid'];self.pending=False;self.rec_started=time.monotonic();self.rec_count=0;self.rec_errors=0;self.record_btn.config(text='STOP Stop',state='normal');self.event_btn.config(state='normal');self.load_details(self.sid)
+                    self.sounds.play('recording_started')
+                    self.last_recording=d['sid'];self.sid=d['sid'];self.pending=False;self.rec_started=time.monotonic();self.rec_count=0;self.rec_errors=0;self.record_btn.config(text='■ Stop Recording',style='Stop.TButton',state='normal');self.event_btn.config(state='normal');self.load_details(self.sid)
                 elif kind in ('stopped','storage_error'):
-                    self.sid=None;self.pending=False;self.record_btn.config(text='REC Record',state='normal');self.event_btn.config(state='disabled');self.rec_label.config(text='Preview only  |  not saved')
+                    self.sounds.play('recording_stopped' if kind=='stopped' else 'storage_error')
+                    self.sid=None;self.pending=False;self.record_btn.config(text='⏺ Start recording',style='Record.TButton',state='normal');self.event_btn.config(state='disabled');self.rec_label.config(text='Preview only  |  not saved')
                     if kind=='storage_error':messagebox.showerror('RECORDING STOPPED - storage failure',d['text'])
-                elif kind=='exported':self.exporting=False;self.footer.config(text='Export saved: '+d['path'])
+                elif kind=='communication_error':
+                    if not self.audio_connected_announced and not self.audio_connection_failure_announced:
+                        self.sounds.play('connection_failed')
+                        self.audio_connection_failure_announced=True
+                    self.footer.config(text='Modbus communication error: '+d['text'][:160])
+                elif kind=='exported':
+                    self.exporting=False
+                    self.footer.config(text='Export saved: '+d['path'])
+                    self.show_export_success(d['path'])
                 elif kind=='export_error':self.exporting=False;messagebox.showerror('Export failed',d['text'])
-                elif kind=='error':self.pending=False;self.record_btn.config(state='normal');messagebox.showerror('PMS Logger',d['text'])
+                elif kind=='error':
+                    self.pending=False;self.record_btn.config(state='normal')
+                    if self.connection_pending:
+                        if not self.audio_connection_failure_announced:self.sounds.play('connection_failed')
+                        self.audio_connection_failure_announced=True
+                        self.connection_pending=False;self.connected=False
+                        self.connect_btn.config(text='Connect',state='normal')
+                        self.connection.config(text='Connection failed')
+                        self.reading_status.config(text='CONNECTION ERROR',fg='#b45309')
+                        self.footer.config(text='Connection error: '+d['text'][:160])
+                    else:
+                        messagebox.showerror('PMS Logger',d['text'])
         except queue.Empty:pass
         if self.sid:
-            elapsed=int(time.monotonic()-self.rec_started);self.global_status.config(text=f"REC RECORDING {elapsed//60:02}:{elapsed%60:02} | {self.settings['mode'].upper()}")
             self.rec_label.config(text=f'{self.rec_count:,} samples  |  {self.rec_errors} errors')
-        else:self.global_status.config(text=self.settings['mode'].upper()+'  |  PREVIEW')
-        if self.latest and time.time()-self.latest['ts']>max(2,3*self.settings['interval']):self.reading_status.config(text='STALE  |  waiting for new reading',foreground='#b45309')
+        if self.latest and time.time()-self.latest['ts']>max(2,3*self.settings['interval']):self.reading_status.config(text='STALE  |  waiting for new reading',fg='#b45309')
         if self.page=='Live Monitor' and self.buffer and time.monotonic()-self.last_plot>.5:
-            self.last_plot=time.monotonic(); rows=list(self.buffer); end=rows[-1]['ts']; seconds={'1 min':60,'5 min':300,'30 min':1800,'Buffer':1e20}[self.window.get()]
-            rows=[r for r in rows if r['ts']>=end-seconds]
+            self.last_plot=time.monotonic(); rows=list(self.buffer); end=rows[-1]['ts']; seconds=WINDOWS[self.window.get()][0] if self.window.get() in WINDOWS else 1e20
+            rows=[r for r in rows if r['ts']>=end-seconds] if self.follow.get() else rows
             from matplotlib.ticker import FuncFormatter
-            self.line.set_data([r['ts'] for r in rows],[r['value'] if r['quality']=='OK' else math.nan for r in rows]);self.lax.set_ylabel('Pressure ('+self.settings['unit']+')')
-            self.lax.xaxis.set_major_formatter(FuncFormatter(lambda x,pos:stamp(x,self.settings['utc_offset'])[11:19]))
+            apply_window_time_grid(self.lax,self.window.get(),units='seconds')
+            display_rows=reduce_live_samples(rows)
+            self.line.set_data([r['ts'] for r in display_rows],[r['value'] if r['quality']=='OK' else math.nan for r in display_rows]);self.lax.set_ylabel('Pressure ('+self.settings['unit']+')')
+            self.lax.xaxis.set_major_formatter(FuncFormatter(lambda x,pos:stamp(x,None)[11:19]))
+            self.lax.tick_params(axis='x',labelrotation=0)
+            from datetime import datetime
+            date=datetime.fromtimestamp(end).strftime('%d %b %Y')
+            self.lax.set_xlabel(date+'  |  Computer local time')
             if self.follow.get():
-                self.lax.relim();self.lax.autoscale_view();self.lax.set_xlim(max(rows[0]['ts'],end-seconds),max(end,rows[0]['ts']+1))
+                self.lax.set_autoscaley_on(self.live_auto.get());self.lax.relim();self.lax.autoscale_view(scaley=self.live_auto.get());self.lax.set_xlim(max(self.live_window_origin if self.live_window_origin is not None else rows[0]['ts'],end-seconds),max(self.live_window_origin if self.live_window_origin is not None else rows[0]['ts'],end-seconds)+seconds if seconds<1e19 else max(end,rows[0]['ts']+1))
+            try:apply_pressure_grid(self.lax,*self.lax.get_ylim(),unit=self.settings['unit'],raw_psi=True)
+            except ValueError:
+                # Keep current bounds on a bad auto range instead of crashing the periodic UI tick.
+                if self.live_auto.get():
+                    self.lax.set_ylim(0,3000)
+                    apply_pressure_grid(self.lax,0,3000,unit=self.settings['unit'],raw_psi=True)
             self.lcanvas.draw_idle()
-        if self.closing:
-            if not self.engine.is_alive():self.instance_lock.close();self.destroy();return
-        self.after(80,self.tick)
+        self._check_connection_watchdog()
+        self._check_modbus_timeout()
+        self.update_enhancements()
+        self._tick_after_id=self.after(80,self.tick)
+    def _check_modbus_timeout(self):
+        """Report missing Modbus replies even when the serial worker is blocked."""
+        if self.settings['mode']!='Modbus RTU' or self.connection_timed_out:
+            return
+        if not self.connect_started or time.monotonic()-self.connect_started<5:
+            return
+        if self.latest and self.latest['quality']=='OK' and time.time()-self.latest['ts']<=max(2,3*self.settings['interval']):
+            return
+        if not self.audio_connection_failure_announced:self.sounds.play('connection_failed')
+        self.audio_connection_failure_announced=True
+        self.connection_timed_out=True
+        self.connection_pending=False
+        self.reading_status.config(text='CONNECTION TIMEOUT  |  NO DATA',fg='#b45309')
+        self.connection.config(text='Modbus RTU  |  '+(self.settings['port'] or 'No port')+'  |  timeout')
+        self.connect_btn.config(text='Disconnect',state='normal')
+        self.footer.config(text='No valid Modbus response within 5 seconds; check port and device')
+        # Do not pretend a serial worker was stopped: it may still be blocked.
+        # A late valid sample may recover the status normally.
+
+    def _check_connection_watchdog(self):
+        """Recover a stalled Modbus-to-Simulation switch without blocking Tk."""
+        if not self.connection_pending or self.settings['mode']!='Simulation' or self.simulation_recovery_attempted:
+            return
+        if time.monotonic()-self.connect_started<2.5:
+            return
+        if self.sid or self.pending:
+            return  # Never abandon a worker that may be saving a recording.
+        self.simulation_recovery_attempted=True
+        old=self.engine
+        # A blocked serial read cannot be interrupted safely on every Windows driver.
+        # Queue retirement, then run the independent simulator on a fresh worker.
+        old.send('quit')
+        self.retired_engines.append(old)
+        self.engine=Engine(self.store)
+        self.engine.start()
+        self.connect_started=time.monotonic()
+        self.footer.config(text='Serial worker unresponsive; restarting simulation worker')
+        self.engine.send('connect',dict(self.settings),self.connection_generation)
+
+    def _shutdown_trace(self,message):
+        """Local diagnostic trail when a Windows close request appears stuck."""
+        try:
+            with (DATA/'shutdown.log').open('a',encoding='utf-8') as log:
+                log.write(time.strftime('%Y-%m-%d %H:%M:%S')+'  '+message+'\n')
+        except OSError:
+            pass
+
+    def _finish_close(self):
+        """Independent shutdown poll; never relies on live-chart tick callbacks."""
+        if not self.closing:return
+        if not self.engine.is_alive():
+            self._shutdown_trace('worker stopped; destroying window')
+            if self._tick_after_id is not None:
+                try:self.after_cancel(self._tick_after_id)
+                except tk.TclError:pass
+                self._tick_after_id=None
+            self._shutdown_complete=True
+            try:
+                self.instance_lock.close()
+            finally:
+                self.destroy()
+            return
+        if time.monotonic()-self.close_started>8 and not self.shutdown_warning_shown:
+            self.shutdown_warning_shown=True
+            self._shutdown_trace('worker still alive after 8s; waiting for safe shutdown')
+            self.footer.config(text='Device worker still stopping — see data/shutdown.log')
+        # The worker is daemonized. A blocked Windows serial driver must not
+        # prevent exit when no recording is being finalized. Never force exit
+        # while the worker may still be writing an active recording.
+        if time.monotonic()-self.close_started>10 and not self.sid and not self.pending:
+            self._shutdown_trace('worker unresponsive; closing UI after grace period')
+            self._shutdown_complete=True
+            try:self.instance_lock.close()
+            finally:self.destroy()
+            return
+        self.after(60,self._finish_close)
+
     def close(self):
-        if self.exporting:messagebox.showinfo('Export running','Please wait for the export to finish before closing.');return
-        if self.sid and not messagebox.askyesno('Stop and exit?','Stop recording, save and exit?'):return
-        if self.save_job:self.after_cancel(self.save_job);self.save_details()
-        self.closing=True;self.engine.send('quit');self.footer.config(text='Saving and closing...')
+        if self.closing:return
+        self._shutdown_trace('close requested; recording='+str(bool(self.sid))
+                             +'; pending='+str(bool(self.pending))
+                             +'; export='+str(bool(self.exporting)))
+        if self.exporting:
+            messagebox.showinfo('Export running',
+                'Please wait for the export to finish before closing.',parent=self)
+            return
+        if (self.sid or self.pending) and not messagebox.askyesno(
+                'Stop and exit?','Stop recording, save and exit?',parent=self):
+            self._shutdown_trace('close cancelled by operator')
+            return
+        try:
+            if self.save_job:
+                self.after_cancel(self.save_job)
+                self.save_job=None
+                if self.save_details() is False:
+                    self._shutdown_trace('close blocked: metadata save failed')
+                    return
+        except Exception as exc:
+            self._shutdown_trace('close blocked: metadata error '+type(exc).__name__)
+            messagebox.showerror('Cannot close safely',
+                'Recording details could not be saved. Please retry.\n'+str(exc),parent=self)
+            return
+        self.closing=True
+        if self.sleep_prevention_active:
+            try:ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)  # ES_CONTINUOUS
+            except (AttributeError,OSError):pass
+            self.sleep_prevention_active=False
+        if self._tick_after_id is not None:
+            try:self.after_cancel(self._tick_after_id)
+            except tk.TclError:pass
+            self._tick_after_id=None
+        self.close_started=time.monotonic()
+        self.shutdown_warning_shown=False
+        self.footer.config(text='Saving and closing...')
+        self._shutdown_trace('quit sent to acquisition worker')
+        self.engine.send('quit')
+        for old in self.retired_engines:
+            if old.is_alive():old.send('quit')
+        self.after(0,self._finish_close)
+
+    def enhance(self):
+        self.last_recording=None; self.enhanced_last=0; self.live_artists=[]
+        self.bind('<Configure>', self.adapt_width, add='+')
+        self.live_min=tk.StringVar(value='0');self.live_max=tk.StringVar(value=f'{from_psi(3000,self.settings["unit"]):.4f}');self.live_auto=tk.BooleanVar(value=True)
+        self.live_labels=tk.BooleanVar(value=True)
+        self.live_slider=TimeScrollbar(self.lcanvas.get_tk_widget().master,self.slide_live)
+        self.live_slider.pack(after=self.lcanvas.get_tk_widget(),fill='x')
+        self.live_events=ttk.Treeview(self.lcanvas.get_tk_widget().master,columns=('time','event','pressure'),show='headings',height=2)
+        self.live_events.heading('time',text='Time');self.live_events.heading('event',text='Event');self.live_events.heading('pressure',text='Pressure');self.live_events.column('time',width=130);self.live_events.column('pressure',width=125,anchor='center');self.live_events.pack(after=self.live_slider,fill='x')
+        self.live_events.insert('','end',iid='empty',values=('','No events yet',''))
+        self.events_expanded=False
+        self.live_event_toggle=ttk.Button(self.lcanvas.get_tk_widget().master,
+                                          text='Events (0)  ▸  Show event list',
+                                          command=self.toggle_live_events)
+        self.live_event_toggle.pack(after=self.live_events,fill='x')
+        self.live_events.bind('<<TreeviewSelect>>',self.select_live_event)
+        self.live_events.bind('<Double-1>',self.edit_live_event)
+        self.lcanvas.mpl_connect('motion_notify_event',lambda e:self.hover(e,False))
+        self.vcanvas.mpl_connect('motion_notify_event',lambda e:self.hover(e,True))
+        self.ltip=None;self.vtip=None;self.hover_artists={}
+        for canvas in (self.lcanvas,):
+            widget=canvas.get_tk_widget()
+            widget.pack_forget()
+            # Bottom controls and navigator claim their space before the flexible plot.
+            siblings = [self.live_events,self.live_event_toggle,self.live_slider] if canvas==self.lcanvas else [self.history_slider]
+            for item in siblings:
+                item.pack_forget()
+                item.pack(side='bottom',fill='x')
+            widget.pack(fill='both',expand=True)
+        # Event list is opt-in; the graph receives the reclaimed vertical space.
+        self.live_events.pack_forget()
+        self.find_ports()
+
+    def scroll_page(self,event):
+        page=getattr(self,'page',None)
+        if page not in ('Settings','About','Reporting'):return
+        canvas={'Settings':self.settings_canvas,'About':self.about_canvas,'Reporting':self.reporting_canvas}[page]
+        target=self.winfo_containing(event.x_root,event.y_root)
+        current=target
+        while current is not None and current!=canvas:
+            if current==canvas.master:break
+            current=current.master
+        if current!=canvas:return
+        if getattr(event,'num',None)==4:delta=-1
+        elif getattr(event,'num',None)==5:delta=1
+        else:
+            wheel=getattr(event,'delta',0)
+            if not wheel:return
+            delta=-1 if wheel>0 else 1
+        canvas.yview_scroll(delta,'units')
+        return 'break'
+
+    def adapt_width(self,event):
+        if event.widget!=self:return
+        compact=event.width<1120
+        if compact==getattr(self,'compact',None):return
+        self.compact=compact
+        self.brand.config(font=(UI_FONT,14 if compact else 15,'bold'),
+                          padx=6 if compact else 12)
+        for button in self.nav_buttons.values():
+            button.config(padx=6 if compact else 10)
+        visible=str(self.details_panel) in self.live_pane.panes()
+        if compact and visible:
+            self.live_pane.forget(self.details_panel)
+        elif not compact and self.details_user_visible and not visible:
+            self.live_pane.add(self.details_panel,weight=1)
+        # Settings actions replaced the former About panel. Keep both columns
+        # on wide screens; stack them on narrow windows without hiding controls.
+        self.settings_device.grid_configure(padx=(0,0) if compact else (0,8))
+        self.settings_display.grid_configure(padx=(0,0) if compact else (0,8))
+        self.settings_actions.grid_forget()
+        if compact:
+            self.settings_columns.columnconfigure(1,weight=0)
+            self.settings_actions.grid(row=2,column=0,sticky='ew',pady=(12,0))
+        else:
+            self.settings_columns.columnconfigure(1,weight=2)
+            self.settings_actions.grid(row=0,column=1,rowspan=2,
+                                       sticky='nsew',padx=(8,0),pady=(0,10))
+
+    def show_live_options(self):
+        if getattr(self,'live_options',None) and self.live_options.winfo_exists():
+            self.live_options.lift()
+            return
+        win=tk.Toplevel(self)
+        win.title('Manual scale options')
+        win.transient(self)
+        win.resizable(False,False)
+        self.live_options=win
+        body=ttk.Frame(win,padding=14);body.pack(fill='both',expand=True)
+        for row,(label,var) in enumerate((('Pressure min',self.live_min),('Pressure max',self.live_max))):
+            ttk.Label(body,text=label+' ('+self.settings['unit']+')').grid(row=row,column=0,sticky='w',padx=(0,10),pady=5)
+            ttk.Entry(body,textvariable=var,width=14).grid(row=row,column=1,sticky='ew',pady=5)
+        ttk.Checkbutton(body,text='Show event labels',variable=self.live_labels,
+                        command=self.paint_live_events).grid(row=2,column=0,columnspan=2,sticky='w',pady=(10,6))
+        ttk.Button(body,text='Apply manual scale',style='Compact.TButton',
+                   command=self.apply_live_scale).grid(row=3,column=0,columnspan=2,sticky='ew',pady=(8,3))
+        ttk.Button(body,text='Close',style='Compact.TButton',command=win.destroy).grid(row=4,column=0,columnspan=2,sticky='ew')
+
+    def select_live_scale(self):
+        self.live_auto.set(self.scale_mode.get()=='Auto')
+        self.toggle_live_auto_scale()
+
+    def toggle_live_auto_scale(self):
+        self.scale_mode.set('Auto' if self.live_auto.get() else 'Manual')
+        self.lax.set_autoscaley_on(self.live_auto.get())
+        if self.live_auto.get():
+            self.lax.relim()
+            self.lax.autoscale_view(scaley=True)
+        else:
+            try:
+                lo,hi=to_psi(float(self.live_min.get()),self.settings['unit']),to_psi(float(self.live_max.get()),self.settings['unit'])
+                validated_pressure_limits(lo,hi)
+                self.lax.set_ylim(lo,hi)
+                apply_pressure_grid(self.lax,lo,hi,unit=self.settings['unit'],raw_psi=True)
+            except ValueError:pass
+        self.lcanvas.draw_idle()
+
+    def apply_live_scale(self):
+        try:
+            lo,hi=to_psi(float(self.live_min.get()),self.settings['unit']),to_psi(float(self.live_max.get()),self.settings['unit'])
+            validated_pressure_limits(lo,hi)
+            self.live_auto.set(False)
+            self.scale_mode.set('Manual')
+            self.lax.set_autoscaley_on(False)
+            self.lax.set_ylim(lo,hi)
+            apply_pressure_grid(self.lax,lo,hi,unit=self.settings['unit'],raw_psi=True)
+            self.lcanvas.draw_idle()
+        except ValueError as exc:
+            messagebox.showerror('Pressure scale',str(exc))
+
+    def window_seconds(self,name):
+        return WINDOWS[name][0] if name in WINDOWS else float('inf')
+
+    def slide_live(self,value):
+        if not self.buffer:return
+        lo,hi=self.buffer[0]['ts'],self.buffer[-1]['ts']; width=min(self.window_seconds(self.window.get()),max(hi-lo,1))
+        start=lo+max(0,hi-lo-width)*float(value)/100
+        self.follow.set(False);self.lax.set_xlim(start,start+width)
+        self.lcanvas.draw_idle()
+
+    def slide_history(self,value):
+        if not self.viewer_sid or not self.vrows:return
+        duration=max((self.vrows[-1]['ts']-self.vsession['started'])/60,.01)
+        width=min(duration,self.window_seconds(self.history_window.get())/60)
+        start=max(0,duration-width)*float(value)/100
+        self.view_vars['xmin'].set(str(start));self.view_vars['xmax'].set(str(start+width))
+        self.vax.set_xlim(start,start+width)
+        self.vcanvas.draw_idle()
+
+    def hover(self,event,history):
+        ax=self.vax if history else self.lax;canvas=self.vcanvas if history else self.lcanvas
+        attr='vtip' if history else 'ltip';old=getattr(self,attr,None)
+        for artist in self.hover_artists.pop(attr,()):
+            try:artist.remove()
+            except (ValueError,NotImplementedError):pass
+        if old is not None:
+            try:old.remove()
+            except (ValueError,NotImplementedError):pass
+            setattr(self,attr,None)
+        if event.inaxes!=ax or event.xdata is None:canvas.draw_idle();return
+        events=self.vevents if history and self.viewer_sid else self.store.events(self.last_recording) if not history and self.last_recording else []
+        base=self.vsession['started'] if history and self.viewer_sid else 0
+        target=base+event.xdata*60 if history else event.xdata
+        def xpos(ts):return (ts-base)/60 if history else ts
+        near=next((e for e in events if abs(ax.transData.transform((xpos(e['ts']),0))[0]-event.x)<8),None)
+        if near:text=stamp(near['ts'],None)+'\n'+near['label'];x=event.xdata;y=event.ydata
+        else:
+            if history:
+                if not self.viewer_sid:return
+                with self.store.connect() as c:
+                    rows=[dict(r) for r in c.execute('SELECT * FROM samples WHERE session=? AND ts BETWEEN ? AND ? ORDER BY ts',(self.viewer_sid,target-5,target+5))]
+            else:rows=list(self.buffer)
+            if not rows:canvas.draw_idle();return
+            row=min(rows,key=lambda r:abs(r['ts']-target));x=xpos(row['ts']);y=row['value']
+            if row['quality']!='OK' or y is None:canvas.draw_idle();return
+            unit=self.settings['unit']
+            text=f"Time: {stamp(row['ts'],None)[11:23]}\nPressure: {from_psi(y,unit):,.2f} {unit}\nQuality: {row['quality']}"
+        if not near:
+            marker,=ax.plot([x],[y],'o',color='#008b86',ms=5)
+            guide=ax.axvline(x,color='#66798a',ls='--',lw=.7)
+            horizontal=ax.axhline(y,color='#66798a',ls=':',lw=.6,alpha=.65)
+            self.hover_artists[attr]=(marker,guide,horizontal)
+        tip=ax.annotate(text,(x,y),xytext=(-12 if event.x>ax.bbox.xmax-160 else 12,-16 if event.y>ax.bbox.ymax-60 else 16),ha='right' if event.x>ax.bbox.xmax-160 else 'left',va='top' if event.y>ax.bbox.ymax-60 else 'bottom',textcoords='offset points',bbox=dict(boxstyle='round',fc='white',ec='#17334c'),fontsize=9)
+        setattr(self,attr,tip);canvas.draw_idle()
+
+    def recording_extrema(self,sid):
+        with self.store.connect() as c:
+            return c.execute("SELECT min(value),max(value) FROM samples WHERE session=? AND quality='OK'",(sid,)).fetchone()
+
+    def update_enhancements(self):
+        valid=not self.connection_pending and self.connected and self.latest and self.latest['quality']=='OK' and time.time()-self.latest['ts']<=max(2,3*self.settings['interval'])
+        self.status_live.config(text=('SIMULATION MODE' if self.settings['mode']=='Simulation' else '● LIVE') if valid else ('CONNECTING...' if self.connection_pending else 'CONNECTION TIMEOUT' if self.connection_timed_out else 'DISCONNECTED / NO DATA'),bg=('#415875' if self.settings['mode']=='Simulation' else '#137a45') if valid else '#b55c00',fg='white',padx=8,pady=4)
+        self.status_rec.config(text=f'● REC {int(time.monotonic()-self.rec_started)//60:02}:{int(time.monotonic()-self.rec_started)%60:02}' if self.sid else 'REC OFF',bg='#c92c38' if self.sid else '#576677',fg='white',padx=8,pady=4)
+        if time.monotonic()-self.enhanced_last<1:return
+        self.enhanced_last=time.monotonic()
+        if self.page=='Live Monitor' and self.buffer:
+            self.live_slider.show_range(list(self.buffer),*self.lax.get_xlim(),None)
+        if self.page=='Viewer' and self.viewer_sid:
+            bounds=[self.vsession['started']+m*60 for m in self.vax.get_xlim()]
+            self.history_slider.show_range(self.vrows,*bounds,None)
+        if self.last_recording:
+            lo,hi=self.recording_extrema(self.last_recording)
+            for label,value in zip(self.metric,(lo,hi)):
+                label.config(text='—' if value is None else f'{from_psi(value,self.settings["unit"]):,.3f}'.rstrip('0').rstrip('.')+f' {self.settings["unit"]}')
+            self.paint_live_events()
+        if self.viewer_sid and self.page=='Viewer':
+            self.update_viewer_summary()
+
+    def annotation_pressure(self,sid,ts):
+        """Display the nearest original valid sample at an annotation timestamp."""
+        if not sid:return 'N/A'
+        with self.store.connect() as db:
+            row=db.execute(
+                "SELECT value FROM samples WHERE session=? AND quality='OK' AND value IS NOT NULL "
+                "ORDER BY ABS(ts-?) LIMIT 1",(sid,ts)).fetchone()
+        return f"{from_psi(row['value'],self.settings['unit']):,.2f} {self.settings['unit']}" if row else 'N/A'
+
+    def paint_live_events(self):
+        for artist in self.live_artists:
+            try:artist.remove()
+            except ValueError:pass
+        self.live_artists=[]
+        if not self.last_recording:return
+        events=self.store.events(self.last_recording)
+        for e in events:
+            self.live_artists.append(self.lax.axvline(e['ts'],color='#bd7b1c',ls='--',lw=.8))
+            if self.live_labels.get():self.live_artists.append(self.lax.annotate(e['label'],(e['ts'],.95),xycoords=('data','axes fraction'),rotation=0,va='top',fontsize=8,bbox=dict(facecolor='#fff0b6',edgecolor='#d6ad45',pad=2),clip_on=True))
+        existing=set(self.live_events.get_children());wanted={str(e['id']) for e in events}
+        if not events: wanted.add('empty')
+        for key in existing-wanted:self.live_events.delete(key)
+        if not events and 'empty' not in existing:
+            self.live_events.insert('','end',iid='empty',values=('','No events yet',''))
+        for e in events:
+            key=str(e['id']);values=(stamp(e['ts'],None)[11:23],e['label'],self.annotation_pressure(self.last_recording,e['ts']))
+            if key in existing:self.live_events.item(key,values=values)
+            else:self.live_events.insert('','end',iid=key,values=values)
+        self.update_live_event_toggle()
+        self.lcanvas.draw_idle()
+
+    def toggle_live_events(self):
+        self.events_expanded=not self.events_expanded
+        if self.events_expanded:
+            self.live_events.pack(side='bottom',fill='x',before=self.live_event_toggle)
+        else:
+            self.live_events.pack_forget()
+        self.update_live_event_toggle()
+
+    def update_live_event_toggle(self):
+        count=0 if not self.last_recording else len(self.store.events(self.last_recording))
+        arrow='▾  Hide event list' if self.events_expanded else '▸  Show event list'
+        self.live_event_toggle.config(text=f'Events ({count})  {arrow}')
+
+    def select_live_event(self,event=None):
+        selected=self.live_events.selection()
+        if not selected or selected[0]=='empty':return
+        e=next(e for e in self.store.events(self.last_recording) if str(e['id'])==selected[0])
+        width=self.lax.get_xlim()[1]-self.lax.get_xlim()[0];self.follow.set(False)
+        self.slide_live(self.live_slider.get());self.lax.set_xlim(e['ts']-width/2,e['ts']+width/2);self.lcanvas.draw_idle()
+
+    def edit_live_event(self,event=None):
+        selected=self.live_events.selection()
+        if not selected or selected[0]=='empty':return
+        e=next(e for e in self.store.events(self.last_recording) if str(e['id'])==selected[0])
+        text=simpledialog.askstring('Edit event','Label:',initialvalue=e['label'],parent=self)
+        if text:self.store.edit_event(e['id'],e['ts'],text);self.paint_live_events()
+
+    def select_history_event(self,event=None):
+        selected=self.events_tree.selection()
+        if not selected or selected[0]=='empty':return
+        e=next(e for e in self.vevents if str(e['id'])==selected[0]);center=(e['ts']-self.vsession['started'])/60
+        lo,hi=self.vax.get_xlim();width=hi-lo;self.vax.set_xlim(center-width/2,center+width/2);self.vcanvas.draw_idle()
 
 if __name__=='__main__':
     try:

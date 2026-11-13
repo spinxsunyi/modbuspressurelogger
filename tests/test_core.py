@@ -1,4 +1,5 @@
 import json, time, sys, zipfile, sqlite3
+import pytest
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from core import Store,Engine,DEFAULTS,decode
@@ -22,7 +23,7 @@ def wait(engine,kind,timeout=3):
 def test_record_disconnect_recovery(tmp_path):
     store=Store(tmp_path/'db'); e=Engine(store);e.start()
     try:
-        e.send('connect',{**DEFAULTS,'interval':.1});wait(e,'sample');e.send('start');sid=wait(e,'started')['sid']
+        e.send('connect',{**DEFAULTS,'mode':'Simulation','interval':.1});wait(e,'sample');e.send('start');sid=wait(e,'started')['sid']
         wait(e,'sample');e.send('drop',True);time.sleep(.25);e.send('drop',False);time.sleep(.25)
         e.send('stop');wait(e,'stopped');rows=store.plot_rows(sid)
         assert any(r['quality']=='TIMEOUT' and r['value'] is None for r in rows)
@@ -40,9 +41,33 @@ def test_persistence_and_exports(tmp_path):
     for ext in ['csv','xlsx','png','pdf']:
         dest=tmp_path/('test.'+ext);export(st,sid,dest,view);assert dest.stat().st_size>200
     with zipfile.ZipFile(tmp_path/'test.xlsx') as z:assert b'<f>' not in z.read('xl/worksheets/sheet1.xml')
+    # The minute-based sheets retain elapsed seconds and add true elapsed minutes.
+    import xml.etree.ElementTree as ET
+    import pytest
+    with zipfile.ZipFile(tmp_path/'test.xlsx') as z:
+        namespace={'m':'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
+        for sheet_number,has_minutes in ((2,False),(3,False),(4,True),(5,True)):
+            root=ET.fromstring(z.read(f'xl/worksheets/sheet{sheet_number}.xml'))
+            header=root.find('m:sheetData/m:row',namespace)
+            headings=[cell.findtext('m:is/m:t',default='',namespaces=namespace) for cell in header]
+            assert ('elapsed_minute' in headings)==has_minutes
+            assert 'elapsed_seconds' in headings
+            if has_minutes:
+                data=root.findall('m:sheetData/m:row',namespace)
+                assert len(data)>1
+                values={cell.attrib['r']:float(cell.findtext('m:v',namespaces=namespace))
+                        for cell in data[1] if cell.find('m:v',namespace) is not None}
+                assert values['C2']==pytest.approx(values['B2']/60)
+
     export(st,sid,tmp_path/'range.csv',{**view,'xmin':.025,'xmax':.05},True)
     import csv
-    with open(tmp_path/'range.csv',encoding='utf-8-sig') as f:assert len(list(csv.reader(f)))==5
+    with open(tmp_path/'range.csv',encoding='utf-8-sig',newline='') as f:
+        lines=list(csv.reader(f))
+    assert lines[0][0].startswith('# Recording acquisition interval')
+    assert lines[4][0]=='timestamp'
+    samples=list(csv.DictReader([','.join(row) for row in lines[4:]]))
+    assert len(samples)==4
+    assert [float(row['elapsed_seconds']) for row in samples]==[1.5,2.0,2.5,3.0]
     interrupted=st.start(DEFAULTS);st.recover();assert st.get(interrupted)['state']=='Interrupted'
 
 def test_plot_retains_peak_and_gap(tmp_path):
@@ -57,7 +82,7 @@ def test_storage_failure_stops_recording(tmp_path):
     st=Store(tmp_path/'db');e=Engine(st);e.start()
     def fail(*a):raise OSError('disk full')
     try:
-        e.send('connect',{**DEFAULTS,'interval':.1});wait(e,'sample');e.send('start');sid=wait(e,'started')['sid'];st.add_sample=fail
+        e.send('connect',{**DEFAULTS,'mode':'Simulation','interval':.1});wait(e,'sample');e.send('start');sid=wait(e,'started')['sid'];st.add_sample=fail
         wait(e,'storage_error');assert e.sid is None;assert st.get(sid)['state']=='Storage error'
     finally:e.send('quit');e.join(3)
 
@@ -67,3 +92,168 @@ def test_second_instance_rejected(tmp_path):
     lock=InstanceLock(tmp_path/'lock')
     with pytest.raises(RuntimeError):InstanceLock(tmp_path/'lock')
     lock.close();second=InstanceLock(tmp_path/'lock');second.close()
+
+def test_delete_annotation_and_recording(tmp_path):
+    st=Store(tmp_path/'db')
+    sid=st.start(DEFAULTS,1000)
+    sample=dict(ts=1001,elapsed=1,value=1200,quality='OK',raw=None,status=None,latency=.01)
+    st.add_sample(sid,sample)
+    st.event(sid,1001,'RIH','Review')
+    event=st.events(sid)[0]
+    assert not st.delete_event(event['id'],'wrong-session')
+    assert len(st.events(sid))==1
+    assert st.delete_event(event['id'],sid)
+    assert st.events(sid)==[]
+    st.event(sid,1001,'POOH','Review')
+    import pytest
+    with pytest.raises(ValueError,match='active'):
+        st.delete_session(sid)
+    assert st.get(sid) is not None
+    st.finish(sid)
+    assert st.delete_session(sid)
+    assert st.sessions()==[]
+    assert st.stats(sid)['n']==0
+    assert st.events(sid)==[]
+    assert not st.delete_session(sid)
+
+def test_canonical_psi_storage_and_display_conversion(tmp_path):
+    import pytest
+    from units import from_psi,to_psi
+    assert from_psi(5000,'psi')==5000
+    assert from_psi(5000,'bar')==pytest.approx(344.738,rel=1e-5)
+    assert from_psi(5000,'kPa')==pytest.approx(34473.786,rel=1e-5)
+    assert from_psi(5000,'MPa')==pytest.approx(34.4738,rel=1e-5)
+    for unit in ('psi','bar','kPa','MPa'):
+        assert to_psi(from_psi(5000,unit),unit)==pytest.approx(5000)
+
+    st=Store(tmp_path/'data.sqlite')
+    sid=st.start({**DEFAULTS,'unit':'kPa'},1000)
+    assert st.get(sid)['unit']=='psi'
+    st.add_sample(sid,dict(ts=1001,elapsed=1,value=5000.0,quality='OK',raw=5000,status=0,latency=.01))
+    st.finish(sid)
+    assert st.plot_rows(sid)[0]['value']==5000.0  # Never convert stored samples.
+    csv_path=tmp_path/'pressure.csv'
+    export(st,sid,csv_path,dict(xmin=0,xmax=1,ymin=0,ymax=5100))
+    import csv
+    with csv_path.open(encoding='utf-8-sig',newline='') as stream:
+        # Export includes three provenance rows and a blank line before the CSV header.
+        header=next(i for i,line in enumerate(stream) if line.startswith('timestamp,'))
+        stream.seek(0)
+        rows=list(csv.DictReader(list(stream)[header:]))
+    assert rows[0]['pressure']=='5000.0'
+    assert rows[0]['unit']=='psi'
+
+def test_legacy_unit_metadata_migration_preserves_values(tmp_path):
+    db=tmp_path/'legacy.sqlite'
+    st=Store(db)
+    sid=st.start({**DEFAULTS,'unit':'kPa'},1000)
+    st.add_sample(sid,dict(ts=1001,elapsed=1,value=5000.0,quality='OK',raw=5000,status=0,latency=.01))
+    with st.connect() as c:
+        c.execute("UPDATE sessions SET unit='kPa' WHERE id=?",(sid,))
+    reopened=Store(db)
+    assert reopened.get(sid)['unit']=='psi'
+    assert reopened.plot_rows(sid)[0]['value']==5000.0
+
+
+def test_demo_seed_first_launch_only(tmp_path):
+    from seed_demo import seed
+    import json
+    db = tmp_path / 'data' / 'recordings.sqlite'
+    seed(db)
+    store = Store(db)
+    sessions = store.sessions()
+    assert len(sessions) == 2
+    assert all(s['state'] == 'Completed' and s['mode'] == 'Simulation' for s in sessions)
+    for session in sessions:
+        details = json.loads(session['details'])
+        assert details['job_id'].startswith('DEMO-')
+        assert 'SYNTHETIC' in details['notes'].upper()
+        assert store.stats(session['id'])['n'] == 2991
+        assert len(store.events(session['id'])) == 8
+    original_ids = {s['id'] for s in sessions}
+    seed(db)
+    assert {s['id'] for s in Store(db).sessions()} == original_ids
+
+
+def test_demo_seed_preserves_existing_real_database(tmp_path):
+    from seed_demo import seed
+    db = tmp_path / 'recordings.sqlite'
+    store = Store(db)
+    sid = store.start(DEFAULTS, 1000)
+    store.finish(sid)
+    seed(db)
+    assert [s['id'] for s in Store(db).sessions()] == [sid]
+
+
+def test_demo_pce_pressure_profile():
+    from seed_demo import pressure_at, FILL_END, LOW_PRESSURE_END, LOW_HOLD_END, STEP_END, HIGH_HOLD_END, TEST_END
+    assert pressure_at(150) < 5
+    assert abs(pressure_at(LOW_PRESSURE_END) - 500) < 10
+    assert abs(pressure_at(LOW_HOLD_END - 1) - 497) < 10
+    assert abs(pressure_at(STEP_END) - 5000) < 10
+    assert abs(pressure_at(STEP_END + 300) - 4900) < 10
+    assert abs(pressure_at(STEP_END + 450) - 4900) < 10
+    assert pressure_at(TEST_END) < 5
+    assert HIGH_HOLD_END - STEP_END == 600
+
+
+def test_continuous_50_minute_recording_has_expected_minute_sheets(tmp_path):
+    """Continuous 0.5 s acquisition yields 50 one-minute and 5 ten-minute rows."""
+    import xml.etree.ElementTree as ET
+    import pytest
+    st=Store(tmp_path/'continuous.sqlite')
+    start=1_700_000_000
+    sid=st.start({**DEFAULTS,'interval':0.5},start)
+    for i in range(6000):
+        elapsed=i*0.5
+        st.add_sample(sid,dict(ts=start+elapsed,elapsed=elapsed,
+                               value=1000+i/10,quality='OK',raw=None,status=None,latency=0))
+    st.finish(sid)
+    output=tmp_path/'continuous.xlsx'
+    export(st,sid,output,{'title':'Continuous 50 minute validation'})
+    ns={'m':'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
+    with zipfile.ZipFile(output) as archive:
+        for sheet_number,step,expected_count in ((4,1,50),(5,10,5)):
+            root=ET.fromstring(archive.read(f'xl/worksheets/sheet{sheet_number}.xml'))
+            rows=root.findall('m:sheetData/m:row',ns)
+            assert len(rows)==expected_count+1  # header plus scheduled data
+            elapsed_minutes=[]
+            pressures=[]
+            for row in rows[1:]:
+                cells={cell.attrib['r'].rstrip('0123456789'):cell.findtext('m:v',namespaces=ns)
+                       for cell in row.findall('m:c',ns)}
+                elapsed_minutes.append(float(cells['C']))
+                pressures.append(float(cells['D']))
+            expected_minutes=list(range(0,50,step))
+            assert elapsed_minutes==pytest.approx(expected_minutes)
+            assert pressures==pytest.approx([1000+minute*12 for minute in expected_minutes])
+
+
+def test_explicit_pressure_multiplier_and_backward_compatibility():
+    from core import DEFAULTS, corrected_pressure, validated_pressure_multiplier, decode
+    assert DEFAULTS['pressure_multiplier']==1
+    assert validated_pressure_multiplier({})==1
+    assert corrected_pressure(1.797,{'pressure_multiplier':1000})==1797
+    assert corrected_pressure(1797,{'pressure_multiplier':1})==1797
+    assert corrected_pressure(None,{'pressure_multiplier':1000}) is None
+    assert decode((1797,1<<12))[0]==1.797
+    for invalid in (0,10,-1,1000000,'bogus'):
+        with pytest.raises(ValueError):validated_pressure_multiplier({'pressure_multiplier':invalid})
+
+
+def test_engine_applies_correction_once_to_recorded_samples(tmp_path):
+    from core import Engine, Store, DEFAULTS
+    st=Store(tmp_path/'multiplier.sqlite')
+    e=Engine(st)
+    class FakeSource:
+        def read(self):return (1.797,'OK',1797,1<<12)
+    e.source=FakeSource()
+    e.settings={**DEFAULTS,'pressure_multiplier':1000}
+    e.sid=st.start(e.settings)
+    e.deadline=time.monotonic()
+    e.poll()
+    rows=st.plot_rows(e.sid)
+    assert len(rows)==1
+    assert rows[0]['value']==1797
+    assert json.loads(st.get(e.sid)['settings'])['pressure_multiplier']==1000
+    assert st.plot_rows(e.sid)[0]['value']==1797
