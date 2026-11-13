@@ -3,12 +3,30 @@ from __future__ import annotations
 import json, math, random, sqlite3, threading, queue, time, uuid
 from contextlib import contextmanager
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime
 from dataclasses import dataclass
 
 DEFAULTS = dict(mode='Modbus RTU', port='', baud=9600, parity='E', stopbits=1,
-                address=1, interval=.5, unit='psi', utc_offset=8, auto_connect=True)
+                address=1, interval=.5, unit='psi', pressure_multiplier=1, auto_connect=True)
 FIELDS = ['well', 'job', 'job_id', 'engineer', 'client', 'location', 'job_date', 'notes']
+
+def validated_pressure_multiplier(settings):
+    """Return the explicitly selected instrument correction; never infer it from decimals."""
+    value = settings.get('pressure_multiplier', 1)
+    if str(value) not in ('1', '1000'):
+        raise ValueError('Pressure multiplier must be x1 or x1000')
+    return int(value)
+
+
+def corrected_pressure(value, settings):
+    """Correct decoded PSI exactly once before samples enter storage or the UI."""
+    if value is None:
+        return None
+    result = value * validated_pressure_multiplier(settings)
+    if not math.isfinite(result):
+        raise ValueError('Corrected pressure must be finite')
+    return result
+
 
 def decode(registers):
     if len(registers) != 2: raise ValueError('Expected readout and status registers')
@@ -82,7 +100,7 @@ class Store:
     def start(self, settings, ts=None):
         ts = time.time() if ts is None else ts
         sid=uuid.uuid4().hex
-        name=datetime.fromtimestamp(ts,timezone.utc).strftime('REC_%Y-%m-%d_%H%M%S_UTC')+'_'+sid[:4]
+        name=datetime.fromtimestamp(ts).strftime('REC_%Y-%m-%d_%H%M%S')+'_'+sid[:4]
         details={k:'' for k in FIELDS}; details['job_date']=datetime.now().strftime('%Y-%m-%d')
         with self.connect() as c:
             c.execute('INSERT INTO sessions(id,name,started,state,mode,unit,settings,details) VALUES(?,?,?,?,?,?,?,?)',
@@ -170,7 +188,8 @@ class Engine(threading.Thread):
             self.source=None
             self.generation=args[1] if len(args)>1 else self.generation+1
             self.last_error=None
-            self.settings=dict(args[0]); self.source=Simulator(self.settings) if self.settings['mode']=='Simulation' else ModbusSource(self.settings)
+            self.settings=dict(args[0]); validated_pressure_multiplier(self.settings)
+            self.source=Simulator(self.settings) if self.settings['mode']=='Simulation' else ModbusSource(self.settings)
             self.deadline=time.monotonic(); self.origin=self.deadline
             self.emit('connected',settings=self.settings,generation=self.generation)
         elif cmd=='disconnect':
@@ -198,6 +217,10 @@ class Engine(threading.Thread):
             self.last_error=error
         else:
             self.last_error=None
+            try:
+                value=corrected_pressure(value,self.settings)
+            except ValueError as exc:
+                self.emit('error',text=str(exc));value=None;quality='INVALID'
         sample=dict(ts=time.time(),elapsed=time.monotonic()-self.origin,value=value,quality=quality,raw=raw,status=status,latency=time.monotonic()-began)
         if self.sid:
             try: self.store.add_sample(self.sid,sample)

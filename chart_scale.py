@@ -1,7 +1,7 @@
 """Shared engineering-chart policy. Display scaling never changes stored samples."""
 from __future__ import annotations
 import math
-from matplotlib.ticker import MultipleLocator, AutoMinorLocator, MaxNLocator
+from matplotlib.ticker import MultipleLocator, AutoMinorLocator, MaxNLocator, FuncFormatter
 
 WINDOWS = {
     '1 min': (60, 10, 2),
@@ -70,8 +70,34 @@ def nice_pressure_step(span, target=6):
     power=10**math.floor(math.log10(raw))
     return min((1,2,2.5,5,10),key=lambda v:abs(v*power-raw))*power
 
+def pressure_tick_decimals(step):
+    """Use enough digits to distinguish neighboring ticks at the current spacing."""
+    if not math.isfinite(step) or step <= 0:
+        raise ValueError('Invalid pressure tick interval')
+    return min(9,max(0,-math.floor(math.log10(step)) + (1 if step / 10**math.floor(math.log10(step)) < 1.5 else 0)))
+
+
+def set_pressure_tick_formatter(ax, step, unit='psi', raw_psi=False):
+    from units import from_psi
+    display_step=abs(from_psi(step,unit)) if raw_psi else step
+    decimals=pressure_tick_decimals(display_step)
+    ax.yaxis.set_major_formatter(FuncFormatter(
+        lambda value, pos: f'{(from_psi(value,unit) if raw_psi else value):,.{decimals}f}'
+    ))
+
+
+def validated_pressure_limits(low, high):
+    """Reject invalid/near-zero spans before passing them to Matplotlib locators."""
+    if not math.isfinite(low) or not math.isfinite(high) or low >= high:
+        raise ValueError('Minimum pressure must be lower than maximum; use finite numbers.')
+    if high-low <= max(abs(low),abs(high),1.0)*1e-10:
+        raise ValueError('Pressure range is too small. Increase the difference between minimum and maximum.')
+    return low, high
+
+
 def apply_pressure_grid(ax, low, high, unit='psi', raw_psi=False):
     """Engineering ticks in displayed units; optional PSI-backed Y coordinates."""
+    validated_pressure_limits(low, high)
     if raw_psi:
         from units import from_psi,to_psi
         display_span=from_psi(high-low,unit)
@@ -80,6 +106,7 @@ def apply_pressure_grid(ax, low, high, unit='psi', raw_psi=False):
         step=nice_pressure_step(high-low)
     ax.yaxis.set_major_locator(MultipleLocator(step))
     ax.yaxis.set_minor_locator(MultipleLocator(step/5))
+    set_pressure_tick_formatter(ax, step, unit, raw_psi)
     return step
 
 def reduce_live_samples(rows, max_points=4000):

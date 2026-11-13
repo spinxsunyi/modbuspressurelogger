@@ -6,7 +6,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, simpledialog
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
-from core import DEFAULTS,FIELDS,Store,Engine
+from core import DEFAULTS,FIELDS,Store,Engine,validated_pressure_multiplier
 from seed_demo import seed
 from units import from_psi,to_psi
 from instance import InstanceLock
@@ -14,8 +14,8 @@ from exports import export,stamp
 from report_page import report_figure,report_figures,graph_figure,report_name,apply_report_time_scale
 from app_icon import set_window_icon, gauge_image
 from chart_scale import (WINDOWS, apply_window_time_grid, apply_engineering_grid,
-                         apply_pressure_grid, reduce_live_samples)
-from PIL import ImageTk
+                         apply_pressure_grid, reduce_live_samples, validated_pressure_limits)
+from PIL import Image, ImageTk
 from sounds import SoundManager
 
 UI_FONT='Segoe UI' if os.name=='nt' else 'Helvetica'
@@ -95,6 +95,16 @@ class App(tk.Tk):
         self.settings=dict(DEFAULTS)
         try: self.settings.update(json.loads((DATA/'settings.json').read_text()))
         except (OSError,ValueError): pass
+        try:self.settings['pressure_multiplier']=validated_pressure_multiplier(self.settings)
+        except ValueError:self.settings['pressure_multiplier']=1
+        # New installs use the PMS-970 preset; legacy custom serial settings remain manual.
+        if 'device_profile' not in self.settings:
+            existing_config=(DATA/'settings.json').exists()
+            self.settings['device_profile']=('manual' if existing_config and any(
+                self.settings.get(k)!=v for k,v in {'baud':9600,'parity':'E','stopbits':2,'address':1}.items()
+            ) else 'auto_pms970')
+        if self.settings['device_profile']=='auto_pms970' and self.settings['mode']=='Modbus RTU':
+            self.settings.update(baud=9600,parity='E',stopbits=2,address=1)
         self.sounds=SoundManager(self.settings.get('sound_enabled',True))
         self.audio_link_healthy=False
         self.audio_connected_announced=False
@@ -336,6 +346,8 @@ class App(tk.Tk):
         self.window=tk.StringVar(value='5 min')
         ttk.Combobox(toolbar,textvariable=self.window,values=['1 min','5 min','10 min','15 min','30 min','1 hour','12 hours','24 hours','Buffer data'],state='readonly',style='Live.TCombobox',width=9).pack(side='left',padx=(0,5))
         ttk.Button(toolbar,text='Go to Live',style='Compact.TButton',command=lambda:self.follow.set(True)).pack(side='left')
+        self.scaling_indicator=ttk.Label(toolbar,text='Pressure correction: x'+str(self.settings.get('pressure_multiplier',1)),foreground='#a45300')
+        self.scaling_indicator.pack(side='left',padx=(9,0))
         self.scale_mode=tk.StringVar(value='Auto')
         ttk.Radiobutton(toolbar,text='Auto scale',value='Auto',variable=self.scale_mode,command=self.select_live_scale).pack(side='left',padx=(10,0))
         ttk.Radiobutton(toolbar,text='Manual scale',value='Manual',variable=self.scale_mode,command=self.select_live_scale).pack(side='left',padx=(5,0))
@@ -544,7 +556,7 @@ class App(tk.Tk):
             duration_text=f'{minutes}m {seconds:02d}s'
             self.history.insert('','end',iid=session['id'],
                 tags=('alternate',) if index%2 else (),
-                values=(stamp(session['started'],self.settings['utc_offset'])[:19].replace('T',' '),
+                values=(stamp(session['started'],None)[:19].replace('T',' '),
                         details.get('well') or session['name'],
                         details.get('job') or '—',
                         details.get('engineer') or '—',
@@ -1112,6 +1124,10 @@ class App(tk.Tk):
                 self.report_drag_hint.pack_forget()
         if getattr(self,'report_range_canvas',None):
             self.report_range_selector.set_active(custom and not self.report_pan_mode.get())
+            if not custom:
+                # Clear the SpanSelector's own selection overlay, not just our shading.
+                self.report_range_selector.clear()
+            self.report_range_selector.set_visible(custom)
             self.report_range_shade.set_visible(custom)
             self.report_excluded_left.set_visible(custom)
             self.report_excluded_right.set_visible(custom)
@@ -1287,9 +1303,8 @@ class App(tk.Tk):
 
     def parse_report_x_view(self,value):
         if self.report_axis.get()!='Date & Time':return float(value)
-        from datetime import datetime,timezone,timedelta
+        from datetime import datetime
         dt=datetime.strptime(value.strip(),'%Y-%m-%d %H:%M:%S')
-        dt=dt.replace(tzinfo=timezone(timedelta(hours=float(self.report_graph_offset))))
         return max(0.0,min(self.report_range_duration,(dt.timestamp()-self.report_graph_start)/60))
 
     def set_report_x_view_fields(self,lo,hi):
@@ -1321,7 +1336,7 @@ class App(tk.Tk):
             self.report_xfrom_label.configure(text='View X from (date/time)')
             ax.xaxis.set_major_formatter(FuncFormatter(
                 lambda x,pos:__import__('datetime').datetime.fromisoformat(stamp(self.report_graph_start+x*60,self.report_graph_offset)).strftime('%d %b\n%H:%M:%S')))
-            ax.set_xlabel('Date & time (UTC%+g)' % float(self.report_graph_offset))
+            ax.set_xlabel('Date & time (Computer local time)')
         else:
             self.report_xfrom_label.configure(text='View X from (min)')
             ax.xaxis.set_major_formatter(FuncFormatter(lambda x,pos:f'{x:g}'))
@@ -1481,36 +1496,82 @@ class App(tk.Tk):
         self.settings_device=grid;self.settings_display=display;self.settings_actions=actions
         grid.columnconfigure(1,weight=1);display.columnconfigure(1,weight=1)
         self.config_vars={}
-        self.utc_offset_labels={
-            7:'UTC+7 — WIB (Jakarta)',
-            8:'UTC+8 — WITA (Balikpapan)',
-            9:'UTC+9 — WIT (Jayapura)',
-            0:'UTC+0 — UTC (Universal Time)',
-        }
-        choices={'mode':['Simulation','Modbus RTU'],'baud':[2400,4800,9600,19200],'parity':['E','N','O'],'stopbits':[1,2],'interval':[.5,1,.2,.1],'unit':['psi','bar','kPa','MPa'],'utc_offset':list(self.utc_offset_labels.values())}
-        for n,k in enumerate(['mode','port','baud','parity','stopbits','address','interval','unit','utc_offset']):
-            parent=grid if n<6 else display
-            row=n if n<6 else n-6
-            ttk.Label(parent,text={'utc_offset':'UTC offset','interval':'Interval (seconds)','baud':'Baud rate','stopbits':'Stop bits'}.get(k,k.title())).grid(row=row,column=0,sticky='w',padx=(0,12),pady=5)
-            initial=(self.utc_offset_labels.get(int(float(self.settings[k])),str(self.settings[k])) if k=='utc_offset' else str(self.settings[k]))
-            v=tk.StringVar(value=initial); self.config_vars[k]=v
-            if k=='port':
-                en=ttk.Combobox(parent,textvariable=v,state='readonly',width=30); self.port_combo=en
-            elif k in choices:en=ttk.Combobox(parent,textvariable=v,values=choices[k],state='readonly',width=30)
-            else:en=ttk.Entry(parent,textvariable=v,width=32)
-            if isinstance(en,ttk.Combobox):
-                en.configure(style='SettingsWhite.TCombobox' if k in ('mode','port','baud','interval','unit','utc_offset') else 'SettingsGrey.TCombobox')
-            elif k=='address':
-                en.configure(style='SettingsGrey.TEntry')
-            en.grid(row=row,column=1,sticky='ew',pady=4)
+        choices={'mode':['Simulation','Modbus RTU'],'baud':[2400,4800,9600,19200],
+                 'parity':['E','N','O'],'stopbits':[1,2],'interval':[.5,1,.2,.1],
+                 'unit':['psi','bar','kPa','MPa'],'pressure_multiplier':['1','1000']}
+        self.config_vars={}
+        for key in ('mode','port','baud','parity','stopbits','address','interval','unit','pressure_multiplier'):
+            value=self.settings.get(key,DEFAULTS.get(key,''))
+            self.config_vars[key]=tk.StringVar(value=str(value))
+        ttk.Label(grid,text='Mode').grid(row=0,column=0,sticky='w',padx=(0,12),pady=5)
+        mode_combo=ttk.Combobox(grid,textvariable=self.config_vars['mode'],values=choices['mode'],state='readonly',width=32,style='SettingsWhite.TCombobox')
+        mode_combo.grid(row=0,column=1,sticky='ew',pady=4)
+        ttk.Label(grid,text='Port').grid(row=1,column=0,sticky='w',padx=(0,12),pady=5)
+        self.port_combo=ttk.Combobox(grid,textvariable=self.config_vars['port'],state='readonly',width=32,style='SettingsWhite.TCombobox')
+        self.port_combo.grid(row=1,column=1,sticky='ew',pady=4)
         port_actions=ttk.Frame(grid)
         port_actions.grid(row=1,column=2,sticky='w',padx=10)
         ttk.Button(port_actions,text='Refresh ports',command=self.find_ports).pack(side='left')
         self.port_count=ttk.Label(port_actions)
         self.port_count.pack(side='left',padx=(8,0))
-        ttk.Label(grid,text='Recommended: 9600 baud',foreground='#576677').grid(row=2,column=2,sticky='w',padx=10)
+
+        ttk.Label(grid,text='Device configuration',font=(UI_FONT,10,'bold')).grid(row=2,column=0,columnspan=3,sticky='w',pady=(14,6))
+        cards=ttk.Frame(grid)
+        cards.grid(row=3,column=0,columnspan=3,sticky='ew')
+        cards.columnconfigure(0,weight=1,uniform='profiles')
+        cards.columnconfigure(1,weight=1,uniform='profiles')
+        self.device_profile=tk.StringVar(value=self.settings.get('device_profile','auto_pms970'))
+        auto_card=ttk.LabelFrame(cards,text='Auto (PMS-970)',padding=12)
+        auto_card.grid(row=0,column=0,sticky='nsew',padx=(0,7))
+        manual_card=ttk.LabelFrame(cards,text='Manual (Custom)',padding=12)
+        manual_card.grid(row=0,column=1,sticky='nsew',padx=(7,0))
+        ttk.Radiobutton(auto_card,text='Use PMS-970 preset',variable=self.device_profile,value='auto_pms970',
+                        command=self.update_device_profile).pack(anchor='w',pady=(0,5))
+        ttk.Label(auto_card,text='Recommended communication settings for Aplisens PMS-970.',
+                  wraplength=300,justify='left').pack(anchor='w',pady=(0,8))
+        # Bundled PMS-970P photograph: no network request or runtime cache.
+        self.pms_profile_image=ImageTk.PhotoImage(gauge_image(94),master=self)
+        try:
+            resource_root=Path(getattr(sys,'_MEIPASS',Path(__file__).parent))
+            with Image.open(resource_root/'assets'/'pms970p.jpg') as photo:
+                thumbnail=photo.convert('RGB')
+                thumbnail.thumbnail((190,115),Image.Resampling.LANCZOS)
+                self.pms_profile_image=ImageTk.PhotoImage(thumbnail,master=self)
+        except (OSError,ValueError):
+            pass
+        ttk.Label(auto_card,image=self.pms_profile_image).pack(anchor='w',pady=(0,6))
+        ttk.Label(auto_card,text='9600 baud  |  E (Even)  |  2 stop bits\nSlave address: 1',
+                  justify='left',font=(UI_FONT,10,'bold')).pack(anchor='w',pady=(0,5))
+        ttk.Label(auto_card,text='Preset profile; no device auto-detection.',foreground='#576677',
+                  wraplength=300).pack(anchor='w')
+        ttk.Radiobutton(manual_card,text='Configure communication manually',variable=self.device_profile,
+                        value='manual',command=self.update_device_profile).grid(row=0,column=0,columnspan=2,sticky='w',pady=(0,7))
+        self.manual_profile_inputs=[]
+        for idx,key in enumerate(('baud','parity','stopbits','address')):
+            ttk.Label(manual_card,text={'baud':'Baud rate','parity':'Parity','stopbits':'Stop bits','address':'Address'}[key]).grid(row=idx+1,column=0,sticky='w',padx=(0,8),pady=5)
+            if key in choices:
+                widget=ttk.Combobox(manual_card,textvariable=self.config_vars[key],values=choices[key],
+                                    state='readonly',width=12,style='SettingsGrey.TCombobox')
+            else:
+                widget=ttk.Entry(manual_card,textvariable=self.config_vars[key],width=14,style='SettingsGrey.TEntry')
+            widget.grid(row=idx+1,column=1,sticky='ew',pady=5)
+            self.manual_profile_inputs.append(widget)
+        manual_card.columnconfigure(1,weight=1)
+        self.profile_cards=(auto_card,manual_card)
+        for row,key in enumerate(('interval','unit','pressure_multiplier')):
+            ttk.Label(display,text={'interval':'Interval (seconds)','unit':'Unit',
+                                   'pressure_multiplier':'Pressure multiplier (x)'}[key]).grid(
+                                       row=row,column=0,sticky='w',padx=(0,12),pady=5)
+            ttk.Combobox(display,textvariable=self.config_vars[key],values=choices[key],
+                         state='readonly',width=30,style='SettingsWhite.TCombobox').grid(
+                             row=row,column=1,sticky='ew',pady=4)
         ttk.Label(display,text='Recommended: 0.5 s',foreground='#576677').grid(row=0,column=2,sticky='w',padx=10)
-        ttk.Label(display,text='0.5 s means one reading is requested every half-second. Actual sampling may be slower if communication is delayed.',foreground='#576677',wraplength=350,justify='left').grid(row=1,column=2,rowspan=2,sticky='nw',padx=10,pady=(4,0))
+        ttk.Label(display,text='0.5 s means one reading is requested every half-second. Actual sampling may be slower if communication is delayed.',
+                  foreground='#576677',wraplength=350,justify='left').grid(row=1,column=2,rowspan=2,sticky='nw',padx=10,pady=(4,0))
+        ttk.Label(display,text='x1 = normal; x1000 = corrected PSI after device decimal decoding. Verify against a trusted pressure reference before recording.',
+                  foreground='#a45300',wraplength=350,justify='left').grid(row=3,column=2,sticky='nw',padx=10,pady=(4,0))
+        self.config_vars['mode'].trace_add('write',lambda *_:self.update_device_profile())
+        self.update_device_profile()
 
         self.sound_enabled=tk.BooleanVar(value=self.settings.get('sound_enabled',True))
         ttk.Checkbutton(actions,text='Enable operational sounds (mute / unmute)',variable=self.sound_enabled,
@@ -1518,7 +1579,7 @@ class App(tk.Tk):
         self.auto=tk.BooleanVar(value=self.settings['auto_connect'])
         ttk.Checkbutton(actions,text='Auto-connect last configuration at startup',variable=self.auto).pack(anchor='w',pady=(4,16))
         ttk.Label(actions,text='Hardware profile: PMS-970  |  FC03  |  address 0x0001  |  readout + status',wraplength=360).pack(anchor='w',pady=(0,8))
-        ttk.Label(actions,text='Sensor/storage unit: PSI. Display units are converted for viewing; stored samples remain PSI.',wraplength=360).pack(anchor='w',pady=(0,8))
+        ttk.Label(actions,text='Stored samples are corrected PSI values. Each recording keeps its multiplier in the session settings; old recordings are not rescaled.',wraplength=360).pack(anchor='w',pady=(0,8))
         ttk.Label(actions,text='Device communication confirmed by user at 9600 baud, November 2026.',wraplength=360).pack(anchor='w',pady=(0,12))
         ttk.Label(actions,text='Data directory:',font=(UI_FONT,9,'bold')).pack(anchor='w')
         ttk.Label(actions,text=str(DATA),wraplength=360).pack(anchor='w',pady=(2,18))
@@ -1591,7 +1652,7 @@ class App(tk.Tk):
             ('Event Annotations','Mark important operational events during recording to provide context when reviewing pressure trends.'),
             ('Recording History & Analysis','Review previously recorded sessions with interactive graphs, zoom and pan controls, pressure statistics, and event markers.'),
             ('Reporting','Generate reports from recorded pressure data for documentation and operational review.'),
-            ('Device Configuration','Configure serial port, baud rate, Modbus parameters, sampling interval, display units, and UTC offset.'),
+            ('Device Configuration','Configure serial port, baud rate, Modbus parameters, sampling interval, display units, and computer-local timestamps.'),
             ('Simulation Mode','Test the monitoring and recording workflow without connecting physical hardware.'),
         ]
         feature_icons=['activity','database','flag','chart','file','sliders','flask']
@@ -1675,14 +1736,29 @@ class App(tk.Tk):
         except OSError as exc:
             self.footer.config(text='Unable to persist sound preference: '+str(exc))
 
+    def update_device_profile(self):
+        """Enable custom serial controls only for Modbus manual mode."""
+        modbus=self.config_vars['mode'].get()=='Modbus RTU'
+        manual=self.device_profile.get()=='manual' and modbus
+        for widget in self.manual_profile_inputs:
+            widget.configure(state=('readonly' if isinstance(widget,ttk.Combobox) else 'normal') if manual else 'disabled')
+        self.port_combo.configure(state='readonly' if modbus else 'disabled')
+        for card in self.profile_cards:
+            for child in card.winfo_children():
+                if isinstance(child,ttk.Radiobutton):child.configure(state='normal' if modbus else 'disabled')
+
     def apply_settings(self):
         if self.sid or self.pending:messagebox.showinfo('Recording','Stop recording before changing settings.');return
         try:
             s={k:v.get() for k,v in self.config_vars.items()}
             s['port']=s['port'].split(' — ',1)[0]
-            for k in ['baud','stopbits','address']:s[k]=int(s[k])
+            s['device_profile']=self.device_profile.get()
+            if s['device_profile']=='auto_pms970' and s['mode']=='Modbus RTU':
+                s.update(baud=9600,parity='E',stopbits=2,address=1)
+            else:
+                for k in ['baud','stopbits','address']:s[k]=int(s[k])
             s['interval']=float(s['interval'])
-            s['utc_offset']=next(offset for offset,label in self.utc_offset_labels.items() if label==s['utc_offset'])
+            s['pressure_multiplier']=validated_pressure_multiplier(s)
             if not 1<=s['address']<=247:raise ValueError('Slave address must be 1-247')
             if s['mode']=='Modbus RTU' and not s['port']:raise ValueError('Specify a COM port')
             s['auto_connect']=self.auto.get()
@@ -1691,6 +1767,9 @@ class App(tk.Tk):
             tmp=DATA/'settings.tmp'; tmp.write_text(json.dumps(s,indent=2)); tmp.replace(DATA/'settings.json')
             old_unit=self.settings['unit']
             self.settings=s
+            for key in ('baud','parity','stopbits','address'):
+                self.config_vars[key].set(str(s[key]))
+            self.scaling_indicator.config(text='Pressure correction: x'+str(s['pressure_multiplier']))
             self.update_simulate_disconnect_visibility()
             if old_unit!=s['unit']:
                 # Manual scale inputs reflect the selected display unit.
@@ -1839,7 +1918,8 @@ class App(tk.Tk):
     def view_values(self):
         v={k:var.get() if k=='title' else float(var.get()) for k,var in self.view_vars.items()}
         if any(not math.isfinite(v[k]) for k in ['xmin','xmax','ymin','ymax']):raise ValueError('Scale must be finite')
-        if v['xmax']<=v['xmin'] or v['ymax']<=v['ymin']:raise ValueError('Maximum must exceed minimum')
+        if v['xmax']<=v['xmin']:raise ValueError('Maximum time must exceed minimum time')
+        validated_pressure_limits(v['ymin'],v['ymax'])
         return v
     def paint_viewer(self):
         v=self.view_values(); ax=self.vax; ax.clear(); start=self.vsession['started']
@@ -1850,25 +1930,25 @@ class App(tk.Tk):
             if self.viewer_time_display.get()=='Elapsed time':
                 seconds=int(round(x*60))
                 return f'{seconds//60:02}:{seconds%60:02}'
-            return stamp(start+x*60,self.settings['utc_offset'])[11:19]
+            return stamp(start+x*60,None)[11:19]
         ax.xaxis.set_major_formatter(FuncFormatter(time_label))
         ax.tick_params(axis='x',labelrotation=0)
         ax.set(xlabel='Elapsed time (mm:ss)' if self.viewer_time_display.get()=='Elapsed time' else 'Date & time',
                ylabel='Pressure ('+self.settings['unit']+')',
                xlim=(v['xmin'],v['xmax']),ylim=(v['ymin'],v['ymax']))
-        ax.yaxis.set_major_formatter(FuncFormatter(lambda p,pos:f'{from_psi(p,self.settings["unit"]):,.1f}'))
+        # Axis formatter is chosen by apply_pressure_grid based on tick spacing.
         apply_pressure_grid(ax,v['ymin'],v['ymax'],unit=self.settings['unit'],raw_psi=True)
         apply_engineering_grid(ax)
         if self.viewer_time_display.get()=='Date & time':
-            from datetime import datetime,timezone,timedelta
-            date=datetime.fromtimestamp(start+v['xmin']*60,timezone(timedelta(hours=self.settings['utc_offset']))).strftime('%d %b %Y')
-            ax.set_xlabel(date+'  |  UTC'+f'{self.settings["utc_offset"]:+g}')
+            from datetime import datetime
+            date=datetime.fromtimestamp(start+v['xmin']*60).strftime('%d %b %Y')
+            ax.set_xlabel(date+'  |  Computer local time')
         for i in self.events_tree.get_children():self.events_tree.delete(i)
         for e in self.vevents:
             x=(e['ts']-start)/60; ax.axvline(x,ls='--',lw=.7,color='#bd7b1c')
             annotation=ax.annotate(e['label'] if self.history_labels.get() else '',(x,.95),xycoords=('data','axes fraction'),rotation=0,va='top',fontsize=8,bbox=dict(facecolor='#fff0b6',edgecolor='#d6ad45',pad=2),clip_on=True); annotation.draggable()
             pressure=self.annotation_pressure(self.viewer_sid,e['ts'])
-            self.events_tree.insert('','end',iid=str(e['id']),values=(stamp(e['ts'],self.settings['utc_offset'])[11:19],e['label'],e['kind'],pressure))
+            self.events_tree.insert('','end',iid=str(e['id']),values=(stamp(e['ts'],None)[11:19],e['label'],e['kind'],pressure))
         self.vcanvas.draw_idle()
     def apply_view(self):
         try:v=self.view_values();self.store.update(self.viewer_sid,'view',v);self.viewer_scale_mode.set('Manual');self.paint_viewer();self.footer.config(text='Viewer configuration saved')
@@ -1890,8 +1970,8 @@ class App(tk.Tk):
                 'max':'—' if hi is None else f'{from_psi(hi,self.settings["unit"]):,.2f} {self.settings["unit"]}',
                 'first_pressure':'—' if first is None else f'{from_psi(first["value"],self.settings["unit"]):,.2f} {self.settings["unit"]}',
                 'last_pressure':'—' if last is None else f'{from_psi(last["value"],self.settings["unit"]):,.2f} {self.settings["unit"]}',
-                'start':stamp(begin,self.settings['utc_offset'])[11:19],
-                'stop':stamp(stop,self.settings['utc_offset'])[11:19] if stop else '—',
+                'start':stamp(begin,None)[11:19],
+                'stop':stamp(stop,None)[11:19] if stop else '—',
                 'duration':f'{elapsed//60}m {elapsed%60:02}s'}
         for name,value in values.items():self.viewer_summary_vars[name].set(value)
 
@@ -1916,8 +1996,7 @@ class App(tk.Tk):
             try:
                 lo=to_psi(float(display_limits['ymin'].get()),self.settings['unit'])
                 hi=to_psi(float(display_limits['ymax'].get()),self.settings['unit'])
-                if not math.isfinite(lo) or not math.isfinite(hi) or lo>=hi:
-                    raise ValueError('Minimum must be lower than maximum.')
+                validated_pressure_limits(lo,hi)
                 self.view_vars['ymin'].set(str(lo))
                 self.view_vars['ymax'].set(str(hi))
                 self.apply_view()
@@ -1956,7 +2035,7 @@ class App(tk.Tk):
             if not self.vsession['started']<=ts<=last:
                 raise ValueError('Choose a time within the recording.')
             label=simpledialog.askstring('Review annotation',
-                                         'Label for '+stamp(ts,self.settings['utc_offset'])[11:19]+':',
+                                         'Label for '+stamp(ts,None)[11:19]+':',
                                          parent=self)
             if label and label.strip():
                 self.store.event(self.viewer_sid,ts,label.strip(),'Review')
@@ -1968,7 +2047,7 @@ class App(tk.Tk):
         if not selected or not self.viewer_sid:return
         event=next((e for e in self.vevents if str(e['id'])==selected[0]),None)
         if event is None:return
-        when=stamp(event['ts'],self.settings['utc_offset'])[11:19]
+        when=stamp(event['ts'],None)[11:19]
         if not messagebox.askyesno('Delete annotation',
                 f'Delete annotation "{event["label"]}" at {when}?\n\n'
                 'This cannot be undone.',icon='warning',parent=self):
@@ -2109,8 +2188,8 @@ class App(tk.Tk):
                     self.connection_pending=False
                     self.connection_timed_out=False
                     self.connect_btn.config(state='normal')
-                    if s['quality']=='OK':self.value.config(text=f"{from_psi(s['value'],self.settings['unit']):,.2f} {self.settings['unit']}")
-                    self.reading_status.config(text=f"{self.settings['mode'].upper()}  |  {s['quality']}  |  {stamp(s['ts'],self.settings['utc_offset'])[11:23]}",fg='#008b92' if s['quality']=='OK' else '#b45309')
+                    if s['quality']=='OK':self.value.config(text=f"{from_psi(s['value'],self.settings['unit']):,.3f}".rstrip('0').rstrip('.')+f" {self.settings['unit']}")
+                    self.reading_status.config(text=f"{self.settings['mode'].upper()}  |  {s['quality']}  |  {stamp(s['ts'],None)[11:23]}",fg='#008b92' if s['quality']=='OK' else '#b45309')
                     if d['sid']:self.rec_count+=1;self.rec_errors+=s['quality']!='OK'
                 elif kind=='connected':
                     self.live_window_origin=None
@@ -2164,15 +2243,20 @@ class App(tk.Tk):
             from matplotlib.ticker import FuncFormatter
             apply_window_time_grid(self.lax,self.window.get(),units='seconds')
             display_rows=reduce_live_samples(rows)
-            self.line.set_data([r['ts'] for r in display_rows],[r['value'] if r['quality']=='OK' else math.nan for r in display_rows]);self.lax.set_ylabel('Pressure ('+self.settings['unit']+')');self.lax.yaxis.set_major_formatter(FuncFormatter(lambda p,pos:f'{from_psi(p,self.settings["unit"]):,.1f}'))
-            self.lax.xaxis.set_major_formatter(FuncFormatter(lambda x,pos:stamp(x,self.settings['utc_offset'])[11:19]))
+            self.line.set_data([r['ts'] for r in display_rows],[r['value'] if r['quality']=='OK' else math.nan for r in display_rows]);self.lax.set_ylabel('Pressure ('+self.settings['unit']+')')
+            self.lax.xaxis.set_major_formatter(FuncFormatter(lambda x,pos:stamp(x,None)[11:19]))
             self.lax.tick_params(axis='x',labelrotation=0)
-            from datetime import datetime,timezone,timedelta
-            date=datetime.fromtimestamp(end,timezone(timedelta(hours=self.settings['utc_offset']))).strftime('%d %b %Y')
-            self.lax.set_xlabel(date+'  |  UTC'+f'{self.settings["utc_offset"]:+g}')
+            from datetime import datetime
+            date=datetime.fromtimestamp(end).strftime('%d %b %Y')
+            self.lax.set_xlabel(date+'  |  Computer local time')
             if self.follow.get():
                 self.lax.set_autoscaley_on(self.live_auto.get());self.lax.relim();self.lax.autoscale_view(scaley=self.live_auto.get());self.lax.set_xlim(max(self.live_window_origin if self.live_window_origin is not None else rows[0]['ts'],end-seconds),max(self.live_window_origin if self.live_window_origin is not None else rows[0]['ts'],end-seconds)+seconds if seconds<1e19 else max(end,rows[0]['ts']+1))
-            apply_pressure_grid(self.lax,*self.lax.get_ylim(),unit=self.settings['unit'],raw_psi=True)
+            try:apply_pressure_grid(self.lax,*self.lax.get_ylim(),unit=self.settings['unit'],raw_psi=True)
+            except ValueError:
+                # Keep current bounds on a bad auto range instead of crashing the periodic UI tick.
+                if self.live_auto.get():
+                    self.lax.set_ylim(0,3000)
+                    apply_pressure_grid(self.lax,0,3000,unit=self.settings['unit'],raw_psi=True)
             self.lcanvas.draw_idle()
         self._check_connection_watchdog()
         self._check_modbus_timeout()
@@ -2409,18 +2493,21 @@ class App(tk.Tk):
         else:
             try:
                 lo,hi=to_psi(float(self.live_min.get()),self.settings['unit']),to_psi(float(self.live_max.get()),self.settings['unit'])
-                if math.isfinite(lo) and math.isfinite(hi) and lo<hi:self.lax.set_ylim(lo,hi)
+                validated_pressure_limits(lo,hi)
+                self.lax.set_ylim(lo,hi)
+                apply_pressure_grid(self.lax,lo,hi,unit=self.settings['unit'],raw_psi=True)
             except ValueError:pass
         self.lcanvas.draw_idle()
 
     def apply_live_scale(self):
         try:
             lo,hi=to_psi(float(self.live_min.get()),self.settings['unit']),to_psi(float(self.live_max.get()),self.settings['unit'])
-            if not math.isfinite(lo) or not math.isfinite(hi) or lo>=hi:
-                raise ValueError('Minimum must be less than maximum; use finite numbers.')
+            validated_pressure_limits(lo,hi)
             self.live_auto.set(False)
             self.scale_mode.set('Manual')
+            self.lax.set_autoscaley_on(False)
             self.lax.set_ylim(lo,hi)
+            apply_pressure_grid(self.lax,lo,hi,unit=self.settings['unit'],raw_psi=True)
             self.lcanvas.draw_idle()
         except ValueError as exc:
             messagebox.showerror('Pressure scale',str(exc))
@@ -2460,7 +2547,7 @@ class App(tk.Tk):
         target=base+event.xdata*60 if history else event.xdata
         def xpos(ts):return (ts-base)/60 if history else ts
         near=next((e for e in events if abs(ax.transData.transform((xpos(e['ts']),0))[0]-event.x)<8),None)
-        if near:text=stamp(near['ts'],self.settings['utc_offset'])+'\n'+near['label'];x=event.xdata;y=event.ydata
+        if near:text=stamp(near['ts'],None)+'\n'+near['label'];x=event.xdata;y=event.ydata
         else:
             if history:
                 if not self.viewer_sid:return
@@ -2471,7 +2558,7 @@ class App(tk.Tk):
             row=min(rows,key=lambda r:abs(r['ts']-target));x=xpos(row['ts']);y=row['value']
             if row['quality']!='OK' or y is None:canvas.draw_idle();return
             unit=self.settings['unit']
-            text=f"Time: {stamp(row['ts'],self.settings['utc_offset'])[11:23]}\nPressure: {from_psi(y,unit):,.2f} {unit}\nQuality: {row['quality']}"
+            text=f"Time: {stamp(row['ts'],None)[11:23]}\nPressure: {from_psi(y,unit):,.2f} {unit}\nQuality: {row['quality']}"
         if not near:
             marker,=ax.plot([x],[y],'o',color='#008b86',ms=5)
             guide=ax.axvline(x,color='#66798a',ls='--',lw=.7)
@@ -2491,14 +2578,14 @@ class App(tk.Tk):
         if time.monotonic()-self.enhanced_last<1:return
         self.enhanced_last=time.monotonic()
         if self.page=='Live Monitor' and self.buffer:
-            self.live_slider.show_range(list(self.buffer),*self.lax.get_xlim(),self.settings['utc_offset'])
+            self.live_slider.show_range(list(self.buffer),*self.lax.get_xlim(),None)
         if self.page=='Viewer' and self.viewer_sid:
             bounds=[self.vsession['started']+m*60 for m in self.vax.get_xlim()]
-            self.history_slider.show_range(self.vrows,*bounds,self.settings['utc_offset'])
+            self.history_slider.show_range(self.vrows,*bounds,None)
         if self.last_recording:
             lo,hi=self.recording_extrema(self.last_recording)
             for label,value in zip(self.metric,(lo,hi)):
-                label.config(text='—' if value is None else f'{from_psi(value,self.settings["unit"]):,.2f} {self.settings["unit"]}')
+                label.config(text='—' if value is None else f'{from_psi(value,self.settings["unit"]):,.3f}'.rstrip('0').rstrip('.')+f' {self.settings["unit"]}')
             self.paint_live_events()
         if self.viewer_sid and self.page=='Viewer':
             self.update_viewer_summary()
@@ -2528,7 +2615,7 @@ class App(tk.Tk):
         if not events and 'empty' not in existing:
             self.live_events.insert('','end',iid='empty',values=('','No events yet',''))
         for e in events:
-            key=str(e['id']);values=(stamp(e['ts'],self.settings['utc_offset'])[11:23],e['label'],self.annotation_pressure(self.last_recording,e['ts']))
+            key=str(e['id']);values=(stamp(e['ts'],None)[11:23],e['label'],self.annotation_pressure(self.last_recording,e['ts']))
             if key in existing:self.live_events.item(key,values=values)
             else:self.live_events.insert('','end',iid=key,values=values)
         self.update_live_event_toggle()
